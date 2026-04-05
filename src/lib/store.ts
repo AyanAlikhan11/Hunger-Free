@@ -3,6 +3,10 @@ import { persist } from 'zustand/middleware';
 import type { User, PageRoute, UserRole } from './types';
 
 interface AppState {
+  // Hydration
+  _hasHydrated: boolean;
+  setHasHydrated: (state: boolean) => void;
+
   // Navigation
   currentPage: PageRoute;
   setCurrentPage: (page: PageRoute) => void;
@@ -36,6 +40,10 @@ export interface AppNotification {
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
+      // Hydration
+      _hasHydrated: false,
+      setHasHydrated: (state) => set({ _hasHydrated: state }),
+
       // Navigation
       currentPage: 'home',
       setCurrentPage: (page) => set((state) => ({ 
@@ -70,6 +78,13 @@ export const useAppStore = create<AppState>()(
         isAuthenticated: state.isAuthenticated,
         currentPage: state.currentPage,
       }),
+      onRehydrateStorage: () => {
+        return (state, error) => {
+          if (!error && state) {
+            state.setHasHydrated(true);
+          }
+        };
+      },
     }
   )
 );
