@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Mail, Lock, Eye, EyeOff, ArrowRight, Apple, HandHelping, Truck, Sprout, Shield } from 'lucide-react';
 import { FoodPatternBackground } from '@/components/shared/food-pattern';
 import { useAppStore } from '@/lib/store';
+import { toast } from 'sonner';
 
 const demoRoles = [
   { label: 'Login as Donor', email: 'rajesh@gmail.com', icon: Apple, color: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' },
@@ -37,17 +38,24 @@ export default function LoginPage() {
       const response = await fetch('/api/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ action: 'login', email, password }),
       });
 
-      if (!response.ok) {
-        throw new Error('Invalid credentials');
+      const data = await response.json();
+
+      if (data.error) {
+        setError(data.error);
+        return;
       }
 
-      const { user } = await response.json();
-      login(user);
+      if (data.user) {
+        login(data.user, data.token);
+        toast.success(`Welcome back, ${data.user.name}!`, {
+          description: `Signed in as ${data.user.role.charAt(0).toUpperCase() + data.user.role.slice(1)}`,
+        });
+      }
     } catch {
-      setError('Invalid email or password. Please try again.');
+      setError('Network error. Please check your connection and try again.');
     } finally {
       setIsLoading(false);
     }
@@ -63,17 +71,24 @@ export default function LoginPage() {
       const response = await fetch('/api/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: demoEmail, password: 'password' }),
+        body: JSON.stringify({ action: 'login', email: demoEmail, password: 'password' }),
       });
 
-      if (!response.ok) {
-        throw new Error('Login failed');
+      const data = await response.json();
+
+      if (data.error) {
+        setError(data.error);
+        return;
       }
 
-      const { user } = await response.json();
-      login(user);
+      if (data.user) {
+        login(data.user, data.token);
+        toast.success(`Welcome back, ${data.user.name}!`, {
+          description: `Signed in as ${data.user.role.charAt(0).toUpperCase() + data.user.role.slice(1)}`,
+        });
+      }
     } catch {
-      setError('Demo login failed. Please try again.');
+      setError('Network error. Please check your connection and try again.');
     } finally {
       setIsLoading(false);
     }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import {
@@ -46,11 +46,16 @@ const categories = [
 const units = ['servings', 'kg', 'pieces', 'liters', 'boxes'];
 
 export default function DonateFoodPage() {
-  const { setCurrentPage } = useAppStore();
+  const { setCurrentPage, user, isAuthenticated, _hasHydrated } = useAppStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (_hasHydrated) setHydrated(true);
+  }, [_hasHydrated]);
 
   const [formData, setFormData] = useState({
     foodName: '',
@@ -97,13 +102,30 @@ export default function DonateFoodPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) {
+      toast.error('You must be logged in to donate food.');
+      return;
+    }
     setIsSubmitting(true);
 
     try {
+      const payload = {
+        donorId: user.id,
+        donorName: user.name,
+        foodName: formData.foodName,
+        description: formData.description,
+        category: formData.category,
+        quantity: formData.quantity,
+        unit: formData.unit,
+        expiryTime: new Date(formData.expiryDate).toISOString(),
+        address: formData.address,
+        location: { lat: 19.076, lng: 72.8777, address: formData.address },
+      };
+
       const response = await fetch('/api/donations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(payload),
       });
 
       if (response.ok) {
@@ -119,15 +141,63 @@ export default function DonateFoodPage() {
           notes: '',
         });
         setUploadedImage(null);
+        setCurrentPage('available-food');
       } else {
-        toast.error('Failed to list donation. Please try again.');
+        const data = await response.json().catch(() => null);
+        toast.error(data?.error || 'Failed to list donation. Please try again.');
       }
-    } catch {
+    } catch (error) {
       toast.error('Something went wrong. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  // Show auth message if not logged in
+  if (hydrated && !isAuthenticated) {
+    return (
+      <div className="relative min-h-screen bg-gradient-to-br from-emerald-50/50 via-white to-amber-50/30">
+        <FoodPatternBackground />
+        <div className="relative z-10 mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+          <button
+            onClick={() => setCurrentPage('home')}
+            className="mb-6 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <span>← Back to Home</span>
+          </button>
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="flex flex-col items-center justify-center py-24"
+          >
+            <div className="flex h-24 w-24 items-center justify-center rounded-full bg-emerald-100 mb-6">
+              <Heart className="h-12 w-12 text-emerald-500" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Login Required</h2>
+            <p className="text-muted-foreground text-center max-w-md mb-6">
+              You need to be logged in to donate food. Please sign up or log in to share your surplus food with those in need.
+            </p>
+            <div className="flex gap-4">
+              <Button
+                onClick={() => setCurrentPage('login')}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              >
+                Log In
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setCurrentPage('signup')}
+                className="border-emerald-200 text-emerald-600 hover:bg-emerald-50"
+              >
+                Sign Up
+              </Button>
+            </div>
+          </motion.div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative min-h-screen bg-gradient-to-br from-emerald-50/50 via-white to-amber-50/30">

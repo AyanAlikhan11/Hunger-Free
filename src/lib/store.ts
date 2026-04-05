@@ -15,8 +15,10 @@ interface AppState {
   // Auth
   user: User | null;
   isAuthenticated: boolean;
-  login: (user: User) => void;
+  authToken: string | null;
+  login: (user: User, token?: string) => void;
   logout: () => void;
+  setAuthToken: (token: string | null) => void;
   
   // UI State
   navbarVisible: boolean;
@@ -55,8 +57,23 @@ export const useAppStore = create<AppState>()(
       // Auth
       user: null,
       isAuthenticated: false,
-      login: (user) => set({ user, isAuthenticated: true, currentPage: 'dashboard' }),
-      logout: () => set({ user: null, isAuthenticated: false, currentPage: 'home' }),
+      authToken: null,
+      login: (user, token) => set({
+        user,
+        isAuthenticated: true,
+        currentPage: 'dashboard',
+        ...(token ? { authToken: token } : {}),
+      }),
+      logout: () => {
+        // Fire-and-forget server-side logout
+        fetch('/api/auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'logout' }),
+        }).catch(() => {});
+        set({ user: null, isAuthenticated: false, authToken: null, currentPage: 'home' });
+      },
+      setAuthToken: (token) => set({ authToken: token }),
 
       // UI
       navbarVisible: true,
@@ -77,6 +94,7 @@ export const useAppStore = create<AppState>()(
         user: state.user,
         isAuthenticated: state.isAuthenticated,
         currentPage: state.currentPage,
+        authToken: state.authToken,
       }),
       onRehydrateStorage: () => {
         return (state, error) => {

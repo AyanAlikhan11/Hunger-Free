@@ -10,6 +10,7 @@ import { Mail, Lock, User, Phone, Eye, EyeOff, ArrowRight, Apple, HandHelping, T
 import { FoodPatternBackground } from '@/components/shared/food-pattern';
 import { useAppStore } from '@/lib/store';
 import type { UserRole } from '@/lib/types';
+import { toast } from 'sonner';
 
 const roles = [
   { id: 'donor' as UserRole, label: 'Donor', emoji: '\uD83C\uDF7D\uFE0F', subtitle: 'Restaurants, Hotels, Households', icon: Apple, color: 'border-amber-400 bg-amber-50 text-amber-700', selectedColor: 'border-amber-500 bg-amber-100 ring-2 ring-amber-500/20' },
@@ -67,6 +68,11 @@ export default function SignupPage() {
       return;
     }
 
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters long.');
+      return;
+    }
+
     if (!agreedToTerms) {
       setError('Please agree to the Terms & Conditions.');
       return;
@@ -78,17 +84,31 @@ export default function SignupPage() {
       const response = await fetch('/api/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, role: selectedRole, name }),
+        body: JSON.stringify({
+          action: 'signup',
+          name,
+          email,
+          password,
+          role: selectedRole,
+          phone: phone || undefined,
+        }),
       });
 
-      if (!response.ok) {
-        throw new Error('Signup failed');
+      const data = await response.json();
+
+      if (data.error) {
+        setError(data.error);
+        return;
       }
 
-      const { user } = await response.json();
-      login(user);
+      if (data.user) {
+        login(data.user, data.token);
+        toast.success('Account created successfully!', {
+          description: `Welcome to HungerFree, ${data.user.name}!`,
+        });
+      }
     } catch {
-      setError('Failed to create account. Please try again.');
+      setError('Network error. Please check your connection and try again.');
     } finally {
       setIsLoading(false);
     }

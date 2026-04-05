@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
   Package,
@@ -30,6 +31,8 @@ import {
   CircleDot,
   AlertCircle,
   Heart,
+  X,
+  Loader2,
 } from 'lucide-react';
 import {
   BarChart,
@@ -59,6 +62,30 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Progress } from '@/components/ui/progress';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+  DialogClose,
+} from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { toast } from 'sonner';
 import { useAppStore } from '@/lib/store';
 
 // ─── Animation Variants ───────────────────────────────────────────────────────
@@ -114,6 +141,47 @@ function StatCard({
   );
 }
 
+// ─── Skeleton Cards ──────────────────────────────────────────────────────────
+
+function SkeletonCard() {
+  return (
+    <Card>
+      <CardContent className="p-6 space-y-3">
+        <Skeleton className="h-4 w-24" />
+        <Skeleton className="h-8 w-16" />
+      </CardContent>
+    </Card>
+  );
+}
+
+function SkeletonRow() {
+  return (
+    <div className="flex items-center justify-between p-4">
+      <div className="flex items-center gap-4">
+        <Skeleton className="h-10 w-10 rounded-full" />
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-3 w-28" />
+        </div>
+      </div>
+      <Skeleton className="h-6 w-20 rounded-full" />
+    </div>
+  );
+}
+
+function SkeletonFoodCard() {
+  return (
+    <Card className="overflow-hidden h-full">
+      <Skeleton className="h-36 w-full" />
+      <CardContent className="p-4 space-y-3">
+        <Skeleton className="h-5 w-32" />
+        <Skeleton className="h-4 w-24" />
+        <Skeleton className="h-9 w-full rounded-md" />
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Status Badge Helper ──────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: string }) {
@@ -138,18 +206,87 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+// ─── Helper: format date ──────────────────────────────────────────────────────
+
+function formatDate(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function formatDateTime(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function getTimeUntilExpiry(expiryTime: string) {
+  const now = new Date().getTime();
+  const expiry = new Date(expiryTime).getTime();
+  const diffMs = expiry - now;
+  if (diffMs <= 0) return 'Expired';
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  if (diffHours >= 24) return `${Math.floor(diffHours / 24)} day${Math.floor(diffHours / 24) > 1 ? 's' : ''}`;
+  return `${diffHours} hour${diffHours !== 1 ? 's' : ''}`;
+}
+
+// ─── Gradient map for food categories ─────────────────────────────────────────
+
+const categoryGradients: Record<string, string> = {
+  'Cooked Food': 'from-emerald-400 to-teal-500',
+  'Vegetables': 'from-green-400 to-emerald-500',
+  'Bakery': 'from-amber-400 to-orange-500',
+  'Grains': 'from-yellow-400 to-amber-500',
+  'Fruits & Dairy': 'from-pink-400 to-rose-500',
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // 1. DONOR DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function DonorDashboard() {
   const { user, setCurrentPage } = useAppStore();
+  const [donations, setDonations] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const recentDonations = [
-    { food: 'Cooked Rice & Curry', quantity: '50 servings', status: 'Available', date: 'Jan 20' },
-    { food: 'Fresh Vegetables', quantity: '20 kg', status: 'Claimed', date: 'Jan 19' },
-    { food: 'Bread Items', quantity: '30 pieces', status: 'Delivered', date: 'Jan 18' },
-  ];
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const res = await fetch(`/api/donations?donorId=${user?.id}`);
+        const data = await res.json();
+        setDonations(data.donations || []);
+      } catch {
+        toast.error('Failed to load donations');
+      } finally {
+        setLoading(false);
+      }
+    }
+    if (user?.id) fetchData();
+  }, [user?.id]);
+
+  const totalDonations = donations.length;
+  const totalQuantity = donations.reduce((sum, d) => sum + (parseInt(d.quantity) || 0), 0);
+
+  if (loading) {
+    return (
+      <div className="space-y-8">
+        <motion.div {...fadeInUp}>
+          <Skeleton className="h-10 w-64" />
+          <Skeleton className="h-5 w-44 mt-2" />
+        </motion.div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <SkeletonCard /> <SkeletonCard /> <SkeletonCard /> <SkeletonCard />
+        </div>
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-6 w-36" />
+            <Skeleton className="h-4 w-52 mt-1" />
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {[1, 2, 3].map((i) => <SkeletonRow key={i} />)}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
@@ -170,10 +307,10 @@ export function DonorDashboard() {
         initial="initial"
         animate="animate"
       >
-        <StatCard title="Total Donations" value={12} icon={Package} color="bg-emerald-500" delay={0} />
-        <StatCard title="Meals Provided" value="450+" icon={UtensilsCrossed} color="bg-amber-500" delay={0.1} />
-        <StatCard title="Food Saved" value="180 kg" icon={Leaf} color="bg-green-500" delay={0.2} />
-        <StatCard title="People Reached" value="350+" icon={Users} color="bg-blue-500" delay={0.3} />
+        <StatCard title="Total Donations" value={totalDonations} icon={Package} color="bg-emerald-500" delay={0} />
+        <StatCard title="Meals Provided" value={totalQuantity} icon={UtensilsCrossed} color="bg-amber-500" delay={0.1} />
+        <StatCard title="Food Saved" value={`${totalQuantity} kg`} icon={Leaf} color="bg-green-500" delay={0.2} />
+        <StatCard title="People Reached" value={totalQuantity} icon={Users} color="bg-blue-500" delay={0.3} />
       </motion.div>
 
       {/* Recent Donations Table */}
@@ -184,26 +321,30 @@ export function DonorDashboard() {
             <CardDescription>Your latest food donation history</CardDescription>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Food Item</TableHead>
-                  <TableHead>Quantity</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Date</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {recentDonations.map((item, idx) => (
-                  <TableRow key={idx}>
-                    <TableCell className="font-medium">{item.food}</TableCell>
-                    <TableCell>{item.quantity}</TableCell>
-                    <TableCell><StatusBadge status={item.status} /></TableCell>
-                    <TableCell className="text-muted-foreground">{item.date}</TableCell>
+            {donations.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">No donations yet. Start donating to see your history here.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Food Item</TableHead>
+                    <TableHead>Quantity</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Date</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {donations.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell className="font-medium">{item.foodName}</TableCell>
+                      <TableCell>{item.quantity} {item.unit}</TableCell>
+                      <TableCell><StatusBadge status={item.status} /></TableCell>
+                      <TableCell className="text-muted-foreground">{formatDate(item.createdAt)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
           </CardContent>
         </Card>
       </motion.div>
@@ -237,43 +378,90 @@ export function DonorDashboard() {
 
 export function NGODashboard() {
   const { user } = useAppStore();
+  const [availableDonations, setAvailableDonations] = useState<any[]>([]);
+  const [myRequests, setMyRequests] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [requestingId, setRequestingId] = useState<string | null>(null);
 
-  const nearbyFood = [
-    {
-      id: 1,
-      name: 'Cooked Rice & Curry',
-      quantity: '50 servings',
-      donor: 'Rajesh Kumar',
-      expiry: '4 hours',
-      distance: '2.3 km',
-      gradient: 'from-emerald-400 to-teal-500',
-    },
-    {
-      id: 2,
-      name: 'Fresh Vegetables Bundle',
-      quantity: '25 kg',
-      donor: 'Green Farms',
-      expiry: '1 day',
-      distance: '5.1 km',
-      gradient: 'from-green-400 to-emerald-500',
-    },
-    {
-      id: 3,
-      name: 'Bakery Items',
-      quantity: '40 pieces',
-      donor: 'City Bakery',
-      expiry: '8 hours',
-      distance: '1.8 km',
-      gradient: 'from-amber-400 to-orange-500',
-    },
-  ];
+  const fetchData = useCallback(async () => {
+    try {
+      const [donRes, reqRes] = await Promise.all([
+        fetch('/api/donations?status=available'),
+        fetch(`/api/requests?ngoId=${user?.id}`),
+      ]);
+      const donData = await donRes.json();
+      const reqData = await reqRes.json();
+      setAvailableDonations(donData.donations || []);
+      setMyRequests(reqData.requests || []);
+    } catch {
+      toast.error('Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.id]);
 
-  const myRequests = [
-    { id: 1, food: 'Fresh Fruits', donor: 'Sunrise Orchards', status: 'accepted', date: 'Jan 20, 10:30 AM' },
-    { id: 2, food: 'Rice & Dal', donor: 'Community Kitchen', status: 'in_transit', date: 'Jan 20, 09:15 AM' },
-    { id: 3, food: 'Bread & Milk', donor: 'Morning Delight', status: 'delivered', date: 'Jan 19, 04:00 PM' },
-    { id: 4, food: 'Cooked Meals', donor: 'Hotel Royal', status: 'pending', date: 'Jan 19, 02:30 PM' },
-  ];
+  useEffect(() => {
+    if (user?.id) fetchData();
+  }, [user?.id, fetchData]);
+
+  const handleRequestPickup = async (donation: any) => {
+    setRequestingId(donation.id);
+    try {
+      // Create request
+      await fetch('/api/requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          donationId: donation.id,
+          ngoId: user?.id,
+          ngoName: user?.name,
+        }),
+      });
+      // Update donation status to claimed
+      await fetch('/api/donations', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: donation.id, status: 'claimed', claimedBy: user?.id }),
+      });
+      toast.success(`Pickup requested for ${donation.foodName}`);
+      fetchData();
+    } catch {
+      toast.error('Failed to request pickup');
+    } finally {
+      setRequestingId(null);
+    }
+  };
+
+  const activeRequests = myRequests.filter((r: any) => r.status !== 'delivered' && r.status !== 'cancelled');
+
+  if (loading) {
+    return (
+      <div className="space-y-8">
+        <motion.div {...fadeInUp}>
+          <Skeleton className="h-10 w-56" />
+          <Skeleton className="h-5 w-44 mt-2" />
+        </motion.div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <SkeletonCard /> <SkeletonCard /> <SkeletonCard /> <SkeletonCard />
+        </div>
+        <div>
+          <Skeleton className="h-7 w-48 mb-4" />
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <SkeletonFoodCard /> <SkeletonFoodCard /> <SkeletonFoodCard />
+          </div>
+        </div>
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-6 w-28" />
+            <Skeleton className="h-4 w-52 mt-1" />
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {[1, 2, 3].map((i) => <SkeletonRow key={i} />)}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
@@ -294,10 +482,10 @@ export function NGODashboard() {
         initial="initial"
         animate="animate"
       >
-        <StatCard title="Active Requests" value={8} icon={ClipboardList} color="bg-blue-500" delay={0} />
-        <StatCard title="Food Received" value="1,200+ kg" icon={PackageCheck} color="bg-emerald-500" delay={0.1} />
-        <StatCard title="People Served" value="3,500+" icon={Users} color="bg-amber-500" delay={0.2} />
-        <StatCard title="Partner Donors" value={24} icon={Handshake} color="bg-purple-500" delay={0.3} />
+        <StatCard title="Active Requests" value={activeRequests.length} icon={ClipboardList} color="bg-blue-500" delay={0} />
+        <StatCard title="Total Requests" value={myRequests.length} icon={PackageCheck} color="bg-emerald-500" delay={0.1} />
+        <StatCard title="Available Food" value={availableDonations.length} icon={Users} color="bg-amber-500" delay={0.2} />
+        <StatCard title="Delivered" value={myRequests.filter((r: any) => r.status === 'delivered').length} icon={Handshake} color="bg-purple-500" delay={0.3} />
       </motion.div>
 
       {/* Available Food Nearby */}
@@ -311,44 +499,58 @@ export function NGODashboard() {
             View All <ChevronRight className="size-4" />
           </Button>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {nearbyFood.map((food, idx) => (
-            <motion.div key={food.id} {...scaleIn} transition={{ delay: 0.4 + idx * 0.1 }}>
-              <Card className="overflow-hidden h-full">
-                <div className={`h-36 bg-gradient-to-br ${food.gradient} relative`}>
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <Package className="size-12 text-white/40" />
+        {availableDonations.length === 0 ? (
+          <Card>
+            <CardContent className="p-8 text-center text-muted-foreground">
+              No available food donations right now. Check back later!
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {availableDonations.map((food, idx) => (
+              <motion.div key={food.id} {...scaleIn} transition={{ delay: 0.4 + idx * 0.1 }}>
+                <Card className="overflow-hidden h-full">
+                  <div className={`h-36 bg-gradient-to-br ${categoryGradients[food.category] || 'from-emerald-400 to-teal-500'} relative`}>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Package className="size-12 text-white/40" />
+                    </div>
+                    <div className="absolute top-3 right-3">
+                      <Badge className="bg-white/90 text-gray-800 backdrop-blur-sm border-0">
+                        <MapPin className="size-3 mr-1" />
+                        {food.location?.address?.split(',').pop()?.trim() || 'Nearby'}
+                      </Badge>
+                    </div>
                   </div>
-                  <div className="absolute top-3 right-3">
-                    <Badge className="bg-white/90 text-gray-800 backdrop-blur-sm border-0">
-                      <MapPin className="size-3 mr-1" />
-                      {food.distance}
-                    </Badge>
-                  </div>
-                </div>
-                <CardContent className="p-4 space-y-3">
-                  <div>
-                    <h3 className="font-semibold">{food.name}</h3>
-                    <p className="text-sm text-muted-foreground">{food.quantity}</p>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">
-                      <Users className="inline size-3 mr-1" />
-                      {food.donor}
-                    </span>
-                    <span className="text-muted-foreground flex items-center gap-1">
-                      <Clock className="size-3" />
-                      {food.expiry}
-                    </span>
-                  </div>
-                  <Button className="w-full bg-emerald-600 hover:bg-emerald-700">
-                    Request Pickup
-                  </Button>
-                </CardContent>
-              </Card>
-            </motion.div>
-          ))}
-        </div>
+                  <CardContent className="p-4 space-y-3">
+                    <div>
+                      <h3 className="font-semibold">{food.foodName}</h3>
+                      <p className="text-sm text-muted-foreground">{food.quantity} {food.unit}</p>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">
+                        <Users className="inline size-3 mr-1" />
+                        {food.donorName}
+                      </span>
+                      <span className="text-muted-foreground flex items-center gap-1">
+                        <Clock className="size-3" />
+                        {getTimeUntilExpiry(food.expiryTime)}
+                      </span>
+                    </div>
+                    <Button
+                      className="w-full bg-emerald-600 hover:bg-emerald-700"
+                      disabled={requestingId === food.id}
+                      onClick={() => handleRequestPickup(food)}
+                    >
+                      {requestingId === food.id ? (
+                        <><Loader2 className="size-4 animate-spin mr-2" />Requesting...</>
+                      ) : 'Request Pickup'}
+                    </Button>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ))}
+          </div>
+        )}
       </motion.div>
 
       {/* My Requests */}
@@ -359,25 +561,29 @@ export function NGODashboard() {
             <CardDescription>Track your pickup request status</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4 max-h-96 overflow-y-auto">
-              {myRequests.map((req) => (
-                <div
-                  key={req.id}
-                  className="flex items-center justify-between rounded-lg border p-4 hover:bg-muted/50 transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center justify-center rounded-full bg-muted p-2">
-                      <Package className="size-5 text-muted-foreground" />
+            {myRequests.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">No requests yet. Browse available food and request a pickup!</p>
+            ) : (
+              <div className="space-y-4 max-h-96 overflow-y-auto">
+                {myRequests.map((req) => (
+                  <div
+                    key={req.id}
+                    className="flex items-center justify-between rounded-lg border p-4 hover:bg-muted/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center justify-center rounded-full bg-muted p-2">
+                        <Package className="size-5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="font-medium">{req.ngoName}</p>
+                        <p className="text-sm text-muted-foreground">{req.donationId} &middot; {formatDateTime(req.createdAt)}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-medium">{req.food}</p>
-                      <p className="text-sm text-muted-foreground">{req.donor} &middot; {req.date}</p>
-                    </div>
+                    <StatusBadge status={req.status.replace('_', ' ')} />
                   </div>
-                  <StatusBadge status={req.status.replace('_', ' ')} />
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </motion.div>
@@ -391,39 +597,143 @@ export function NGODashboard() {
 
 export function VolunteerDashboard() {
   const { user } = useAppStore();
+  const [activeDeliveries, setActiveDeliveries] = useState<any[]>([]);
+  const [availableRequests, setAvailableRequests] = useState<any[]>([]);
+  const [allRequests, setAllRequests] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  const activeDeliveries = [
-    {
-      id: 1,
-      pickup: 'Hotel Grand, MG Road',
-      dropoff: 'Hope Shelter, Indiranagar',
-      items: 'Cooked Rice & Curry (30 servings)',
-      progress: 60,
-      status: 'in_transit',
-    },
-    {
-      id: 2,
-      pickup: 'Fresh Mart, Koramangala',
-      dropoff: 'Sunrise NGO, BTM Layout',
-      items: 'Fresh Vegetables (15 kg)',
-      progress: 0,
-      status: 'pending',
-    },
-    {
-      id: 3,
-      pickup: 'City Bakery, Jayanagar',
-      dropoff: 'Care Home, JP Nagar',
-      items: 'Bread & Bakery Items (25 pieces)',
-      progress: 80,
-      status: 'in_transit',
-    },
-  ];
+  const fetchData = useCallback(async () => {
+    try {
+      const [myRes, availRes, allRes] = await Promise.all([
+        fetch(`/api/requests?volunteerId=${user?.id}`),
+        fetch('/api/requests?status=pending'),
+        fetch('/api/requests'),
+      ]);
+      const myData = await myRes.json();
+      const availData = await availRes.json();
+      const allData = await allRes.json();
 
-  const availableRequests = [
-    { id: 1, ngo: 'Food for All Foundation', items: 'Rice & Dal (40 servings)', pickup: 'Community Kitchen, HSR Layout', distance: '4.2 km', time: '2 hours ago' },
-    { id: 2, ngo: 'Helping Hands NGO', items: 'Fruits & Vegetables (20 kg)', pickup: 'Green Market, Whitefield', distance: '8.5 km', time: '30 min ago' },
-    { id: 3, ngo: 'Seva Samiti', items: 'Cooked Meals (60 servings)', pickup: 'Restaurant Row, Church Street', distance: '3.1 km', time: '15 min ago' },
-  ];
+      const myActive = (myData.requests || []).filter(
+        (r: any) => r.status === 'accepted' || r.status === 'in_transit'
+      );
+      // Available: pending requests with no volunteer
+      const pending = (availData.requests || []).filter((r: any) => !r.volunteerId);
+
+      setActiveDeliveries(myActive);
+      setAvailableRequests(pending);
+      setAllRequests(allData.requests || []);
+    } catch {
+      toast.error('Failed to load deliveries');
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (user?.id) fetchData();
+  }, [user?.id, fetchData]);
+
+  const handlePickUp = async (requestId: string) => {
+    setActionLoading(requestId);
+    try {
+      await fetch('/api/requests', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: requestId, status: 'in_transit' }),
+      });
+      toast.success('Marked as picked up! Delivery in progress.');
+      fetchData();
+    } catch {
+      toast.error('Failed to update status');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDelivered = async (requestId: string, donationId: string) => {
+    setActionLoading(requestId);
+    try {
+      // Mark request as delivered
+      await fetch('/api/requests', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: requestId, status: 'delivered' }),
+      });
+      // Mark donation as delivered
+      await fetch('/api/donations', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: donationId, status: 'delivered' }),
+      });
+      toast.success('Delivery completed! Great job!');
+      fetchData();
+    } catch {
+      toast.error('Failed to update delivery');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleAcceptRequest = async (requestId: string) => {
+    setActionLoading(requestId);
+    try {
+      await fetch('/api/requests', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: requestId,
+          volunteerId: user?.id,
+          volunteerName: user?.name,
+          status: 'accepted',
+        }),
+      });
+      toast.success('Request accepted! Head to the pickup location.');
+      fetchData();
+    } catch {
+      toast.error('Failed to accept request');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const totalDelivered = allRequests.filter(
+    (r: any) => r.volunteerId === user?.id && r.status === 'delivered'
+  ).length;
+
+  if (loading) {
+    return (
+      <div className="space-y-8">
+        <motion.div {...fadeInUp}>
+          <Skeleton className="h-10 w-60" />
+          <Skeleton className="h-5 w-44 mt-2" />
+        </motion.div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <SkeletonCard /> <SkeletonCard /> <SkeletonCard /> <SkeletonCard />
+        </div>
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-6 w-36" />
+            <Skeleton className="h-4 w-48 mt-1" />
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {[1, 2].map((i) => (
+              <div key={i} className="rounded-xl border p-5 space-y-4">
+                <div className="flex gap-3">
+                  <Skeleton className="h-8 w-8 rounded-full" />
+                  <div className="space-y-2 flex-1">
+                    <Skeleton className="h-4 w-48" />
+                    <Skeleton className="h-3 w-36" />
+                  </div>
+                </div>
+                <Skeleton className="h-10 w-full rounded-lg" />
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
@@ -444,9 +754,9 @@ export function VolunteerDashboard() {
         initial="initial"
         animate="animate"
       >
-        <StatCard title="Deliveries Made" value={45} icon={Truck} color="bg-emerald-500" delay={0} />
-        <StatCard title="Active Deliveries" value={3} icon={Navigation} color="bg-blue-500" delay={0.1} />
-        <StatCard title="Distance Covered" value="280 + km" icon={MapPin} color="bg-amber-500" delay={0.2} />
+        <StatCard title="Deliveries Made" value={totalDelivered} icon={Truck} color="bg-emerald-500" delay={0} />
+        <StatCard title="Active Deliveries" value={activeDeliveries.length} icon={Navigation} color="bg-blue-500" delay={0.1} />
+        <StatCard title="Available Requests" value={availableRequests.length} icon={MapPin} color="bg-amber-500" delay={0.2} />
         <StatCard title="Rating" value="4.9/5" icon={Star} color="bg-purple-500" delay={0.3} />
       </motion.div>
 
@@ -458,77 +768,100 @@ export function VolunteerDashboard() {
             <CardDescription>Current delivery assignments</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-6 max-h-[500px] overflow-y-auto">
-              {activeDeliveries.map((delivery, idx) => (
-                <motion.div
-                  key={delivery.id}
-                  {...scaleIn}
-                  transition={{ delay: 0.4 + idx * 0.1 }}
-                  className="rounded-xl border p-5 space-y-4"
-                >
-                  {/* Route Info */}
-                  <div className="flex items-start gap-3">
-                    <div className="flex flex-col items-center gap-1 pt-1">
-                      <div className="rounded-full bg-emerald-100 p-1.5">
-                        <MapPin className="size-3.5 text-emerald-600" />
+            {activeDeliveries.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">No active deliveries. Accept a request below to get started!</p>
+            ) : (
+              <div className="space-y-6 max-h-[500px] overflow-y-auto">
+                {activeDeliveries.map((delivery, idx) => {
+                  const progress = delivery.status === 'in_transit' ? 50 : 0;
+                  return (
+                    <motion.div
+                      key={delivery.id}
+                      {...scaleIn}
+                      transition={{ delay: 0.4 + idx * 0.1 }}
+                      className="rounded-xl border p-5 space-y-4"
+                    >
+                      {/* Route Info */}
+                      <div className="flex items-start gap-3">
+                        <div className="flex flex-col items-center gap-1 pt-1">
+                          <div className="rounded-full bg-emerald-100 p-1.5">
+                            <MapPin className="size-3.5 text-emerald-600" />
+                          </div>
+                          <div className="w-0.5 h-8 bg-muted-foreground/20" />
+                          <div className="rounded-full bg-blue-100 p-1.5">
+                            <Navigation className="size-3.5 text-blue-600" />
+                          </div>
+                        </div>
+                        <div className="flex-1 space-y-3">
+                          <div>
+                            <p className="text-sm font-medium">{delivery.ngoName || 'NGO'}</p>
+                            <p className="text-xs text-muted-foreground">Pickup Location</p>
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium">Delivery Point</p>
+                            <p className="text-xs text-muted-foreground">Drop-off Location</p>
+                          </div>
+                        </div>
+                        <StatusBadge status={delivery.status === 'in_transit' ? 'In Transit' : 'Accepted'} />
                       </div>
-                      <div className="w-0.5 h-8 bg-muted-foreground/20" />
-                      <div className="rounded-full bg-blue-100 p-1.5">
-                        <Navigation className="size-3.5 text-blue-600" />
-                      </div>
-                    </div>
-                    <div className="flex-1 space-y-3">
-                      <div>
-                        <p className="text-sm font-medium">{delivery.pickup}</p>
-                        <p className="text-xs text-muted-foreground">Pickup Location</p>
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium">{delivery.dropoff}</p>
-                        <p className="text-xs text-muted-foreground">Drop-off Location</p>
-                      </div>
-                    </div>
-                    <StatusBadge status={delivery.status === 'in_transit' ? 'In Transit' : 'Pending'} />
-                  </div>
 
-                  {/* Food Summary */}
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 rounded-lg px-3 py-2">
-                    <Package className="size-4" />
-                    {delivery.items}
-                  </div>
-
-                  {/* Progress */}
-                  {delivery.status === 'in_transit' && (
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Progress</span>
-                        <span className="font-medium">{delivery.progress}%</span>
+                      {/* Food Summary */}
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 rounded-lg px-3 py-2">
+                        <Package className="size-4" />
+                        {delivery.donationId} - Requested on {formatDateTime(delivery.createdAt)}
                       </div>
-                      <Progress value={delivery.progress} className="h-2" />
-                    </div>
-                  )}
 
-                  {/* Actions */}
-                  <div className="flex gap-3">
-                    {delivery.status === 'pending' && (
-                      <Button className="bg-blue-600 hover:bg-blue-700 flex-1">
-                        <CheckCircle2 className="size-4" />
-                        Mark as Picked Up
-                      </Button>
-                    )}
-                    {delivery.status === 'in_transit' && (
-                      <Button className="bg-emerald-600 hover:bg-emerald-700 flex-1">
-                        <CheckCircle2 className="size-4" />
-                        Mark as Delivered
-                      </Button>
-                    )}
-                    <Button variant="outline" size="sm">
-                      <Navigation className="size-4" />
-                      Navigate
-                    </Button>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
+                      {/* Progress */}
+                      {delivery.status === 'in_transit' && (
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground">Progress</span>
+                            <span className="font-medium">{progress}%</span>
+                          </div>
+                          <Progress value={progress} className="h-2" />
+                        </div>
+                      )}
+
+                      {/* Actions */}
+                      <div className="flex gap-3">
+                        {delivery.status === 'accepted' && (
+                          <Button
+                            className="bg-blue-600 hover:bg-blue-700 flex-1"
+                            disabled={actionLoading === delivery.id}
+                            onClick={() => handlePickUp(delivery.id)}
+                          >
+                            {actionLoading === delivery.id ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              <CheckCircle2 className="size-4" />
+                            )}
+                            Mark as Picked Up
+                          </Button>
+                        )}
+                        {delivery.status === 'in_transit' && (
+                          <Button
+                            className="bg-emerald-600 hover:bg-emerald-700 flex-1"
+                            disabled={actionLoading === delivery.id}
+                            onClick={() => handleDelivered(delivery.id, delivery.donationId)}
+                          >
+                            {actionLoading === delivery.id ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              <CheckCircle2 className="size-4" />
+                            )}
+                            Mark as Delivered
+                          </Button>
+                        )}
+                        <Button variant="outline" size="sm">
+                          <Navigation className="size-4" />
+                          Navigate
+                        </Button>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
       </motion.div>
@@ -541,39 +874,41 @@ export function VolunteerDashboard() {
             <CardDescription>Pending requests from NGOs that need volunteers</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {availableRequests.map((req) => (
-                <div
-                  key={req.id}
-                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-lg border p-4 hover:bg-muted/50 transition-colors"
-                >
-                  <div className="flex-1 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <Building className="size-4 text-muted-foreground" />
-                      <p className="font-medium">{req.ngo}</p>
+            {availableRequests.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">No available requests at the moment.</p>
+            ) : (
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {availableRequests.map((req) => (
+                  <div
+                    key={req.id}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-lg border p-4 hover:bg-muted/50 transition-colors"
+                  >
+                    <div className="flex-1 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Building className="size-4 text-muted-foreground" />
+                        <p className="font-medium">{req.ngoName}</p>
+                      </div>
+                      <p className="text-sm text-muted-foreground">Donation: {req.donationId}</p>
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Clock className="size-3" />
+                          {formatDateTime(req.createdAt)}
+                        </span>
+                      </div>
                     </div>
-                    <p className="text-sm text-muted-foreground">{req.items}</p>
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <MapPin className="size-3" />
-                        {req.pickup}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Navigation className="size-3" />
-                        {req.distance}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Clock className="size-3" />
-                        {req.time}
-                      </span>
-                    </div>
+                    <Button
+                      className="bg-emerald-600 hover:bg-emerald-700 whitespace-nowrap"
+                      disabled={actionLoading === req.id}
+                      onClick={() => handleAcceptRequest(req.id)}
+                    >
+                      {actionLoading === req.id ? (
+                        <><Loader2 className="size-4 animate-spin mr-2" />Accepting...</>
+                      ) : 'Accept Request'}
+                    </Button>
                   </div>
-                  <Button className="bg-emerald-600 hover:bg-emerald-700 whitespace-nowrap">
-                    Accept Request
-                  </Button>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </motion.div>
@@ -585,17 +920,35 @@ export function VolunteerDashboard() {
 // 4. FARMER DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════════════
 
+interface ProductFormData {
+  productName: string;
+  price: string;
+  unit: string;
+  quantity: string;
+  category: string;
+  description: string;
+  isOrganic: boolean;
+}
+
+const defaultForm: ProductFormData = {
+  productName: '',
+  price: '',
+  unit: 'kg',
+  quantity: '',
+  category: 'Vegetables',
+  description: '',
+  isOrganic: false,
+};
+
 export function FarmerDashboard() {
   const { user, setCurrentPage } = useAppStore();
-
-  const products = [
-    { id: 1, name: 'Organic Tomatoes', price: 40, unit: 'kg', quantity: 150, category: 'Vegetables', isOrganic: true },
-    { id: 2, name: 'Basmati Rice', price: 85, unit: 'kg', quantity: 500, category: 'Grains', isOrganic: false },
-    { id: 3, name: 'Fresh Spinach', price: 25, unit: 'kg', quantity: 80, category: 'Vegetables', isOrganic: true },
-    { id: 4, name: 'Whole Wheat Flour', price: 45, unit: 'kg', quantity: 300, category: 'Grains', isOrganic: false },
-    { id: 5, name: 'Organic Carrots', price: 35, unit: 'kg', quantity: 120, category: 'Vegetables', isOrganic: true },
-    { id: 6, name: 'Green Apples', price: 120, unit: 'kg', quantity: 200, category: 'Fruits', isOrganic: true },
-  ];
+  const [products, setProducts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<any>(null);
+  const [deletingProduct, setDeletingProduct] = useState<any>(null);
+  const [form, setForm] = useState<ProductFormData>(defaultForm);
+  const [formLoading, setFormLoading] = useState(false);
 
   const categoryColors: Record<string, string> = {
     Vegetables: 'bg-green-100 text-green-700 border-green-200',
@@ -604,6 +957,144 @@ export function FarmerDashboard() {
     Dairy: 'bg-blue-100 text-blue-700 border-blue-200',
     Bakery: 'bg-orange-100 text-orange-700 border-orange-200',
   };
+
+  const fetchProducts = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/products?farmerId=${user?.id}`);
+      const data = await res.json();
+      setProducts(data.products || []);
+    } catch {
+      toast.error('Failed to load products');
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (user?.id) fetchProducts();
+  }, [user?.id, fetchProducts]);
+
+  const openAddDialog = () => {
+    setForm(defaultForm);
+    setShowAddDialog(true);
+  };
+
+  const openEditDialog = (product: any) => {
+    setForm({
+      productName: product.productName,
+      price: String(product.price),
+      unit: product.unit,
+      quantity: String(product.quantity),
+      category: product.category,
+      description: product.description || '',
+      isOrganic: product.isOrganic,
+    });
+    setEditingProduct(product);
+  };
+
+  const handleSubmit = async () => {
+    if (!form.productName || !form.price || !form.quantity) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+    setFormLoading(true);
+    try {
+      if (editingProduct) {
+        await fetch('/api/products', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: editingProduct.id,
+            productName: form.productName,
+            price: parseFloat(form.price),
+            unit: form.unit,
+            quantity: parseInt(form.quantity),
+            category: form.category,
+            description: form.description,
+            isOrganic: form.isOrganic,
+          }),
+        });
+        toast.success('Product updated successfully');
+        setEditingProduct(null);
+      } else {
+        await fetch('/api/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            farmerId: user?.id,
+            farmerName: user?.name,
+            productName: form.productName,
+            price: parseFloat(form.price),
+            unit: form.unit,
+            quantity: parseInt(form.quantity),
+            category: form.category,
+            description: form.description,
+            isOrganic: form.isOrganic,
+            location: user?.location || { lat: 0, lng: 0, address: user?.address || '' },
+          }),
+        });
+        toast.success('Product added successfully');
+        setShowAddDialog(false);
+      }
+      fetchProducts();
+    } catch {
+      toast.error('Failed to save product');
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deletingProduct) return;
+    try {
+      await fetch(`/api/products?id=${deletingProduct.id}`, { method: 'DELETE' });
+      toast.success('Product deleted');
+      setDeletingProduct(null);
+      fetchProducts();
+    } catch {
+      toast.error('Failed to delete product');
+    }
+  };
+
+  const totalProducts = products.length;
+  const totalQuantity = products.reduce((sum, p) => sum + (p.quantity || 0), 0);
+
+  if (loading) {
+    return (
+      <div className="space-y-8">
+        <motion.div {...fadeInUp}>
+          <Skeleton className="h-10 w-56" />
+          <Skeleton className="h-5 w-40 mt-2" />
+        </motion.div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <SkeletonCard /> <SkeletonCard /> <SkeletonCard /> <SkeletonCard />
+        </div>
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-6 w-28" />
+            <Skeleton className="h-4 w-48 mt-1" />
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {[1, 2, 3].map((i) => (
+                <Card key={i}>
+                  <CardContent className="p-5 space-y-4">
+                    <Skeleton className="h-5 w-32" />
+                    <Skeleton className="h-7 w-24" />
+                    <Skeleton className="h-4 w-28" />
+                    <div className="flex gap-2">
+                      <Skeleton className="h-9 w-20 rounded-md" />
+                      <Skeleton className="h-9 w-9 rounded-md" />
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
@@ -624,10 +1115,10 @@ export function FarmerDashboard() {
         initial="initial"
         animate="animate"
       >
-        <StatCard title="Products Listed" value={15} icon={Sprout} color="bg-green-500" delay={0} />
-        <StatCard title="Total Sold" value="2,400+ kg" icon={TrendingUp} color="bg-emerald-500" delay={0.1} />
-        <StatCard title="Revenue" value="₹85,000" icon={Coins} color="bg-amber-500" delay={0.2} />
-        <StatCard title="Buyers Connected" value={120} icon={Users} color="bg-blue-500" delay={0.3} />
+        <StatCard title="Products Listed" value={totalProducts} icon={Sprout} color="bg-green-500" delay={0} />
+        <StatCard title="Total Quantity" value={`${totalQuantity} kg`} icon={TrendingUp} color="bg-emerald-500" delay={0.1} />
+        <StatCard title="Revenue" value="₹0" icon={Coins} color="bg-amber-500" delay={0.2} />
+        <StatCard title="Buyers Connected" value={0} icon={Users} color="bg-blue-500" delay={0.3} />
       </motion.div>
 
       {/* My Products */}
@@ -638,56 +1129,70 @@ export function FarmerDashboard() {
             <CardDescription>Manage your product listings</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 max-h-[600px] overflow-y-auto">
-              {products.map((product, idx) => (
-                <motion.div
-                  key={product.id}
-                  {...scaleIn}
-                  transition={{ delay: 0.4 + idx * 0.05 }}
-                >
-                  <Card className="h-full">
-                    <CardContent className="p-5 space-y-4">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <h3 className="font-semibold">{product.name}</h3>
-                            {product.isOrganic && (
-                              <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">
-                                <Leaf className="size-3" />
-                                Organic
-                              </Badge>
-                            )}
+            {products.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">No products listed yet. Add your first product!</p>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 max-h-[600px] overflow-y-auto">
+                {products.map((product, idx) => (
+                  <motion.div
+                    key={product.id}
+                    {...scaleIn}
+                    transition={{ delay: 0.4 + idx * 0.05 }}
+                  >
+                    <Card className="h-full">
+                      <CardContent className="p-5 space-y-4">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-semibold">{product.productName}</h3>
+                              {product.isOrganic && (
+                                <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">
+                                  <Leaf className="size-3" />
+                                  Organic
+                                </Badge>
+                              )}
+                            </div>
+                            <Badge variant="outline" className={categoryColors[product.category] || ''}>
+                              {product.category}
+                            </Badge>
                           </div>
-                          <Badge variant="outline" className={categoryColors[product.category] || ''}>
-                            {product.category}
-                          </Badge>
                         </div>
-                      </div>
 
-                      <div className="flex items-baseline gap-1">
-                        <IndianRupee className="size-4 text-muted-foreground" />
-                        <span className="text-xl font-bold">{product.price}</span>
-                        <span className="text-sm text-muted-foreground">/ {product.unit}</span>
-                      </div>
+                        <div className="flex items-baseline gap-1">
+                          <IndianRupee className="size-4 text-muted-foreground" />
+                          <span className="text-xl font-bold">{product.price}</span>
+                          <span className="text-sm text-muted-foreground">/ {product.unit}</span>
+                        </div>
 
-                      <div className="flex items-center justify-between text-sm text-muted-foreground">
-                        <span>{product.quantity} {product.unit} available</span>
-                      </div>
+                        <div className="flex items-center justify-between text-sm text-muted-foreground">
+                          <span>{product.quantity} {product.unit} available</span>
+                        </div>
 
-                      <div className="flex gap-2 pt-1">
-                        <Button variant="outline" size="sm" className="flex-1">
-                          <Edit className="size-3.5" />
-                          Edit
-                        </Button>
-                        <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50">
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              ))}
-            </div>
+                        <div className="flex gap-2 pt-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex-1"
+                            onClick={() => openEditDialog(product)}
+                          >
+                            <Edit className="size-3.5" />
+                            Edit
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                            onClick={() => setDeletingProduct(product)}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </motion.div>
@@ -697,6 +1202,7 @@ export function FarmerDashboard() {
         <Button
           size="lg"
           className="bg-emerald-600 hover:bg-emerald-700"
+          onClick={openAddDialog}
         >
           <Plus className="size-4" />
           Add New Product
@@ -710,6 +1216,123 @@ export function FarmerDashboard() {
           <ArrowRight className="size-4" />
         </Button>
       </motion.div>
+
+      {/* Add / Edit Dialog */}
+      <Dialog open={showAddDialog || !!editingProduct} onOpenChange={(open) => {
+        if (!open) { setShowAddDialog(false); setEditingProduct(null); }
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editingProduct ? 'Edit Product' : 'Add New Product'}</DialogTitle>
+            <DialogDescription>
+              {editingProduct ? 'Update your product details' : 'Fill in the details for your new product'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="productName">Product Name</Label>
+              <Input
+                id="productName"
+                value={form.productName}
+                onChange={(e) => setForm({ ...form, productName: e.target.value })}
+                placeholder="e.g. Organic Tomatoes"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="price">Price (₹)</Label>
+                <Input
+                  id="price"
+                  type="number"
+                  value={form.price}
+                  onChange={(e) => setForm({ ...form, price: e.target.value })}
+                  placeholder="40"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="quantity">Quantity</Label>
+                <Input
+                  id="quantity"
+                  type="number"
+                  value={form.quantity}
+                  onChange={(e) => setForm({ ...form, quantity: e.target.value })}
+                  placeholder="150"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="unit">Unit</Label>
+                <Input
+                  id="unit"
+                  value={form.unit}
+                  onChange={(e) => setForm({ ...form, unit: e.target.value })}
+                  placeholder="kg"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="category">Category</Label>
+                <Input
+                  id="category"
+                  value={form.category}
+                  onChange={(e) => setForm({ ...form, category: e.target.value })}
+                  placeholder="Vegetables"
+                />
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="description">Description</Label>
+              <Input
+                id="description"
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Brief product description"
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <Switch
+                checked={form.isOrganic}
+                onCheckedChange={(checked) => setForm({ ...form, isOrganic: checked })}
+              />
+              <Label>Organic Product</Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Cancel</Button>
+            </DialogClose>
+            <Button
+              className="bg-emerald-600 hover:bg-emerald-700"
+              disabled={formLoading}
+              onClick={handleSubmit}
+            >
+              {formLoading ? <Loader2 className="size-4 animate-spin" /> : null}
+              {editingProduct ? 'Save Changes' : 'Add Product'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={!!deletingProduct} onOpenChange={(open) => { if (!open) setDeletingProduct(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Product</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete &quot;{deletingProduct?.productName}&quot;? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700"
+              onClick={handleDelete}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -718,35 +1341,9 @@ export function FarmerDashboard() {
 // 5. ADMIN DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Chart data
-const donationsOverTime = [
-  { month: 'Jul', count: 45 },
-  { month: 'Aug', count: 62 },
-  { month: 'Sep', count: 88 },
-  { month: 'Oct', count: 105 },
-  { month: 'Nov', count: 130 },
-  { month: 'Dec', count: 158 },
-  { month: 'Jan', count: 172 },
-];
-
-const foodByCategory = [
-  { name: 'Cooked Food', value: 35 },
-  { name: 'Vegetables', value: 25 },
-  { name: 'Grains', value: 18 },
-  { name: 'Bakery', value: 12 },
-  { name: 'Fruits & Dairy', value: 10 },
-];
-
 const CATEGORY_COLORS = ['#10b981', '#f59e0b', '#84cc16', '#f97316', '#14b8a6'];
 
-const topDonors = [
-  { name: 'Rajesh Kumar', donations: 87 },
-  { name: 'Hotel Grand', donations: 72 },
-  { name: 'Green Farms', donations: 65 },
-  { name: 'City Bakery', donations: 54 },
-  { name: 'Fresh Mart', donations: 48 },
-];
-
+// Keep user growth as mock data since analytics API doesn't track it
 const userGrowth = [
   { month: 'Jul', users: 245 },
   { month: 'Aug', users: 380 },
@@ -757,18 +1354,90 @@ const userGrowth = [
   { month: 'Jan', users: 1560 },
 ];
 
-const recentActivity = [
-  { icon: Package, color: 'bg-emerald-100 text-emerald-600', action: 'New food donation listed by Hotel Grand', time: '5 min ago' },
-  { icon: CheckCircle2, color: 'bg-blue-100 text-blue-600', action: 'Delivery completed by Volunteer Rahul', time: '12 min ago' },
-  { icon: Users, color: 'bg-purple-100 text-purple-600', action: 'New NGO "Feed the Future" registered', time: '25 min ago' },
-  { icon: Sprout, color: 'bg-green-100 text-green-600', action: 'Farmer Amit listed 5 new products', time: '1 hour ago' },
-  { icon: Handshake, color: 'bg-amber-100 text-amber-600', action: 'Hope Shelter claimed 30 food packages', time: '2 hours ago' },
-  { icon: AlertCircle, color: 'bg-red-100 text-red-600', action: 'Food donation expired - Fresh Fruits (15 kg)', time: '3 hours ago' },
-  { icon: Heart, color: 'bg-pink-100 text-pink-600', action: 'Community milestone: 40,000+ meals served', time: '5 hours ago' },
-];
+// Icon map for recent activity
+const activityIconMap: Record<string, { icon: React.ElementType; color: string }> = {
+  donated: { icon: Package, color: 'bg-emerald-100 text-emerald-600' },
+  delivered: { icon: CheckCircle2, color: 'bg-blue-100 text-blue-600' },
+  requested: { icon: ClipboardList, color: 'bg-amber-100 text-amber-600' },
+  listed: { icon: Sprout, color: 'bg-green-100 text-green-600' },
+  registered: { icon: Users, color: 'bg-purple-100 text-purple-600' },
+  claimed: { icon: Handshake, color: 'bg-amber-100 text-amber-600' },
+  expired: { icon: AlertCircle, color: 'bg-red-100 text-red-600' },
+};
+
+function getActivityIcon(action: string) {
+  const lower = action.toLowerCase();
+  for (const [key, value] of Object.entries(activityIconMap)) {
+    if (lower.includes(key)) return value;
+  }
+  return { icon: Heart, color: 'bg-pink-100 text-pink-600' };
+}
 
 export function AdminDashboard() {
   const { setCurrentPage } = useAppStore();
+  const [analytics, setAnalytics] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchAnalytics() {
+      try {
+        const res = await fetch('/api/analytics');
+        const data = await res.json();
+        setAnalytics(data.analytics || null);
+      } catch {
+        toast.error('Failed to load analytics');
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchAnalytics();
+  }, []);
+
+  // Map analytics data to chart formats
+  const donationsOverTime = analytics?.donationsByMonth || [];
+  const totalFoodByCategory = analytics?.foodByCategory || [];
+  const foodByCategory = totalFoodByCategory.map((item: any) => ({
+    name: item.category,
+    value: item.count,
+  }));
+  const topDonors = analytics?.topDonors || [];
+  const recentActivity = analytics?.recentActivity || [];
+
+  if (loading) {
+    return (
+      <div className="space-y-8">
+        <motion.div {...fadeInUp}>
+          <Skeleton className="h-10 w-48" />
+          <Skeleton className="h-5 w-56 mt-2" />
+        </motion.div>
+        <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+          {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
+        </div>
+        <div className="grid gap-6 lg:grid-cols-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i}>
+              <CardHeader>
+                <Skeleton className="h-6 w-40" />
+                <Skeleton className="h-4 w-48 mt-1" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-72 w-full rounded-lg" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-6 w-36" />
+            <Skeleton className="h-4 w-44 mt-1" />
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {[1, 2, 3].map((i) => <SkeletonRow key={i} />)}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
@@ -787,12 +1456,12 @@ export function AdminDashboard() {
         initial="initial"
         animate="animate"
       >
-        <StatCard title="Total Donations" value="1,247" icon={Package} color="bg-emerald-500" delay={0} />
-        <StatCard title="Food Saved" value="15,680 kg" icon={Leaf} color="bg-green-500" delay={0.05} />
-        <StatCard title="People Served" value="42,350" icon={Users} color="bg-amber-500" delay={0.1} />
-        <StatCard title="Farmers Connected" value={328} icon={Sprout} color="bg-lime-500" delay={0.15} />
-        <StatCard title="Active Volunteers" value={892} icon={Truck} color="bg-blue-500" delay={0.2} />
-        <StatCard title="NGOs Active" value={156} icon={Building} color="bg-purple-500" delay={0.25} />
+        <StatCard title="Total Donations" value={analytics?.totalDonations?.toLocaleString() || '0'} icon={Package} color="bg-emerald-500" delay={0} />
+        <StatCard title="Food Saved" value={`${((analytics?.totalFoodSaved || 0) / 1000).toFixed(1)}k kg`} icon={Leaf} color="bg-green-500" delay={0.05} />
+        <StatCard title="People Served" value={analytics?.totalPeopleServed?.toLocaleString() || '0'} icon={Users} color="bg-amber-500" delay={0.1} />
+        <StatCard title="Farmers Connected" value={analytics?.totalFarmersConnected || 0} icon={Sprout} color="bg-lime-500" delay={0.15} />
+        <StatCard title="Active Volunteers" value={analytics?.totalActiveVolunteers || 0} icon={Truck} color="bg-blue-500" delay={0.2} />
+        <StatCard title="NGOs Active" value="156" icon={Building} color="bg-purple-500" delay={0.25} />
       </motion.div>
 
       {/* Charts Section */}
@@ -856,7 +1525,7 @@ export function AdminDashboard() {
                       paddingAngle={4}
                       dataKey="value"
                     >
-                      {foodByCategory.map((_entry, index) => (
+                      {foodByCategory.map((_entry: any, index: number) => (
                         <Cell key={`cell-${index}`} fill={CATEGORY_COLORS[index % CATEGORY_COLORS.length]} />
                       ))}
                     </Pie>
@@ -870,14 +1539,14 @@ export function AdminDashboard() {
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="space-y-2 min-w-[140px]">
-                  {foodByCategory.map((entry, index) => (
+                  {foodByCategory.map((entry: any, index: number) => (
                     <div key={entry.name} className="flex items-center gap-2 text-sm">
                       <div
                         className="size-3 rounded-full shrink-0"
                         style={{ backgroundColor: CATEGORY_COLORS[index] }}
                       />
                       <span className="text-muted-foreground truncate">{entry.name}</span>
-                      <span className="font-medium ml-auto">{entry.value}%</span>
+                      <span className="font-medium ml-auto">{entry.value}</span>
                     </div>
                   ))}
                 </div>
@@ -966,22 +1635,31 @@ export function AdminDashboard() {
             <CardDescription>Latest platform activity</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4 max-h-96 overflow-y-auto">
-              {recentActivity.map((activity, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-start gap-4 rounded-lg border p-4 hover:bg-muted/50 transition-colors"
-                >
-                  <div className={`rounded-full p-2 shrink-0 ${activity.color}`}>
-                    <activity.icon className="size-4" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm">{activity.action}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{activity.time}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            {recentActivity.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">No recent activity to show.</p>
+            ) : (
+              <div className="space-y-4 max-h-96 overflow-y-auto">
+                {recentActivity.map((activity: any, idx: number) => {
+                  const { icon: ActivityIcon, color } = getActivityIcon(activity.action);
+                  return (
+                    <div
+                      key={idx}
+                      className="flex items-start gap-4 rounded-lg border p-4 hover:bg-muted/50 transition-colors"
+                    >
+                      <div className={`rounded-full p-2 shrink-0 ${color}`}>
+                        <ActivityIcon className="size-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm">{activity.action}</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {activity.user && `${activity.user} • `}{activity.time}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
       </motion.div>
