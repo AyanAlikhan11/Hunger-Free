@@ -106,7 +106,7 @@ const statusConfig: Record<string, { label: string; className: string }> = {
 };
 
 export default function AvailableFoodPage() {
-  const { setCurrentPage, user, isAuthenticated } = useAppStore();
+  const { setCurrentPage, user, isAuthenticated, authToken } = useAppStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -200,55 +200,41 @@ export default function AvailableFoodPage() {
   }, [searchQuery, categoryFilter, statusFilter, sortBy, donations]);
 
   const handleRequestPickup = async (donation: Donation) => {
-    if (!user || user.role !== 'ngo') {
-      toast.error('Only NGO users can request pickups. Please login as an NGO.');
-      return;
+  if (!user || user.role !== 'ngo') {
+    toast.error('Only NGO users can request pickups. Please login as an NGO.');
+    return;
+  }
+  if (!authToken) {
+    toast.error('Session missing/expired. Please login again.');
+    return;
+  }
+
+  try {
+    const requestRes = await fetch('/api/requests', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({
+        donationId: donation.id,
+        // do NOT send ngoId/ngoName anymore
+      }),
+    });
+
+    if (!requestRes.ok) {
+      const data = await requestRes.json().catch(() => null);
+      throw new Error(data?.error || 'Failed to create pickup request');
     }
 
-    try {
-      // POST to /api/requests
-      const requestRes = await fetch('/api/requests', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          donationId: donation.id,
-          ngoId: user.id,
-          ngoName: user.name,
-        }),
-      });
+    // Remove from local list (since this page shows "available" donations)
+    setDonations((prev) => prev.filter((d) => d.id !== donation.id));
 
-      if (!requestRes.ok) {
-        const data = await requestRes.json().catch(() => null);
-        throw new Error(data?.error || 'Failed to create pickup request');
-      }
-
-      // PATCH donation status to 'claimed'
-      const patchRes = await fetch('/api/donations', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: donation.id,
-          status: 'claimed',
-        }),
-      });
-
-      if (!patchRes.ok) {
-        const data = await patchRes.json().catch(() => null);
-        throw new Error(data?.error || 'Failed to update donation status');
-      }
-
-      // Remove from local state
-      setDonations((prev) => prev.filter((d) => d.id !== donation.id));
-
-      toast.success(
-        `Pickup request sent for "${donation.name}"! The donor will be notified.`
-      );
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : 'Something went wrong. Please try again.'
-      );
-    }
-  };
+    toast.success(`Pickup request sent for "${donation.name}"!`);
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : 'Something went wrong. Please try again.');
+  }
+};
 
   const isExpiringSoon = (expiry: string) => {
     const match = expiry.match(/(\d+)\s*(hour|day)/i);

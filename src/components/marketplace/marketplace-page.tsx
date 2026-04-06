@@ -70,7 +70,7 @@ const productCategories = ['Vegetables', 'Grains', 'Fruits', 'Dairy', 'Other'];
 const productUnits = ['kg', 'pieces', 'liters', 'boxes', 'bunches'];
 
 export default function MarketplacePage() {
-  const { setCurrentPage, user, isAuthenticated } = useAppStore();
+  const { setCurrentPage, user, isAuthenticated, authToken } = useAppStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [organicOnly, setOrganicOnly] = useState(false);
@@ -168,42 +168,44 @@ export default function MarketplacePage() {
   };
 
   const handleAddProduct = async () => {
-    if (!user) {
-      toast.error('You must be logged in to add products.');
-      return;
-    }
+  if (!user || !authToken) {
+    toast.error('You must be logged in to add products.');
+    return;
+  }
 
-    if (
-      !newProduct.productName ||
-      !newProduct.price ||
-      !newProduct.quantity ||
-      !newProduct.category
-    ) {
-      toast.error('Please fill in all required fields.');
-      return;
-    }
+  if (user.role !== 'farmer') {
+    toast.error('Only farmers can add products.');
+    return;
+  }
 
-    setIsSubmitting(true);
-    try {
-      const payload = {
-        farmerId: user.id,
-        farmerName: user.name,
-        productName: newProduct.productName,
-        description: newProduct.description,
-        price: parseFloat(newProduct.price),
-        unit: newProduct.unit,
-        quantity: parseInt(newProduct.quantity),
-        category: newProduct.category,
-        address: newProduct.address,
-        isOrganic: newProduct.isOrganic,
-        location: { lat: 19.076, lng: 72.8777, address: newProduct.address || 'India' },
-      };
+  if (!newProduct.productName || !newProduct.price || !newProduct.quantity || !newProduct.category) {
+    toast.error('Please fill in all required fields.');
+    return;
+  }
 
-      const response = await fetch('/api/products', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+  setIsSubmitting(true);
+  try {
+    const payload = {
+      productName: newProduct.productName,
+      description: newProduct.description,
+      price: parseFloat(newProduct.price),
+      unit: newProduct.unit,
+      quantity: parseInt(newProduct.quantity),
+      category: newProduct.category,
+      address: newProduct.address,
+      isOrganic: newProduct.isOrganic,
+      lat: 19.076,
+      lng: 72.8777,
+    };
+
+    const response = await fetch('/api/products', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify(payload),
+    });
 
       if (response.ok) {
         toast.success('Product added successfully!');

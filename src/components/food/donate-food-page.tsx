@@ -46,7 +46,7 @@ const categories = [
 const units = ['servings', 'kg', 'pieces', 'liters', 'boxes'];
 
 export default function DonateFoodPage() {
-  const { setCurrentPage, user, isAuthenticated, _hasHydrated } = useAppStore();
+  const { setCurrentPage, user, isAuthenticated, _hasHydrated, authToken } = useAppStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -101,57 +101,65 @@ export default function DonateFoodPage() {
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user) {
-      toast.error('You must be logged in to donate food.');
-      return;
-    }
-    setIsSubmitting(true);
+  e.preventDefault();
 
-    try {
-      const payload = {
-        donorId: user.id,
-        donorName: user.name,
-        foodName: formData.foodName,
-        description: formData.description,
-        category: formData.category,
-        quantity: formData.quantity,
-        unit: formData.unit,
-        expiryTime: new Date(formData.expiryDate).toISOString(),
-        address: formData.address,
-        location: { lat: 19.076, lng: 72.8777, address: formData.address },
-      };
+  if (!user || !authToken) {
+    toast.error('You must be logged in to donate food.');
+    return;
+  }
 
-      const response = await fetch('/api/donations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+  setIsSubmitting(true);
+
+  try {
+    const payload = {
+      foodName: formData.foodName,
+      description: formData.description,
+      category: formData.category,
+      quantity: formData.quantity,
+      unit: formData.unit,
+      expiryTime: formData.expiryDate
+        ? new Date(formData.expiryDate).toISOString()
+        : undefined,
+      address: formData.address,
+      // if you don't have real map yet, keep dummy coords:
+      lat: 19.076,
+      lng: 72.8777,
+      // imageUrl: (later from Firebase Storage)
+    };
+
+    const response = await fetch('/api/donations', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (response.ok) {
+      toast.success('Food donation listed successfully! Thank you for your generosity.');
+      setFormData({
+        foodName: '',
+        description: '',
+        category: '',
+        quantity: '',
+        unit: 'servings',
+        expiryDate: '',
+        address: '',
+        notes: '',
       });
-
-      if (response.ok) {
-        toast.success('Food donation listed successfully! Thank you for your generosity.');
-        setFormData({
-          foodName: '',
-          description: '',
-          category: '',
-          quantity: '',
-          unit: 'servings',
-          expiryDate: '',
-          address: '',
-          notes: '',
-        });
-        setUploadedImage(null);
-        setCurrentPage('available-food');
-      } else {
-        const data = await response.json().catch(() => null);
-        toast.error(data?.error || 'Failed to list donation. Please try again.');
-      }
-    } catch (error) {
-      toast.error('Something went wrong. Please try again.');
-    } finally {
-      setIsSubmitting(false);
+      setUploadedImage(null);
+      setCurrentPage('available-food');
+    } else {
+      const data = await response.json().catch(() => null);
+      toast.error(data?.error || 'Failed to list donation. Please try again.');
     }
-  };
+  } catch {
+    toast.error('Something went wrong. Please try again.');
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   // Show auth message if not logged in
   if (hydrated && !isAuthenticated) {

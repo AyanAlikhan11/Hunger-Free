@@ -130,7 +130,7 @@ function SkeletonDeliveryCard() {
 }
 
 export default function VolunteerPanel() {
-  const { setCurrentPage, user, _hasHydrated } = useAppStore();
+  const { setCurrentPage, user, _hasHydrated, authToken } = useAppStore();
   const [availableRequests, setAvailableRequests] = useState<PickupRequest[]>([]);
   const [activeDeliveries, setActiveDeliveries] = useState<ActiveDelivery[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -139,8 +139,15 @@ export default function VolunteerPanel() {
 
   useEffect(() => {
     if (!_hasHydrated) return;
+
     if (!user) {
       setIsLoading(false);
+      return;
+    }
+
+    if (!authToken) {
+      setIsLoading(false);
+      toast.error('Session missing/expired. Please login again.');
       return;
     }
 
@@ -148,22 +155,29 @@ export default function VolunteerPanel() {
       setIsLoading(true);
       try {
         // Fetch available pickup requests (pending status, no volunteer assigned)
-        const pendingRes = await fetch('/api/requests?status=pending');
+        const pendingRes = await fetch('/api/requests?status=pending', {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+
         if (pendingRes.ok) {
           const pendingData = await pendingRes.json();
           const pending = (pendingData.requests || []).filter(
             (r: PickupRequest) => !r.volunteerId
           );
           setAvailableRequests(pending);
+        } else {
+          throw new Error('Failed to fetch pending requests');
         }
 
         // Fetch active deliveries for this volunteer
-        const activeRes = await fetch(`/api/requests?volunteerId=${user.id}`);
+        const activeRes = await fetch(`/api/requests?volunteerId=${user.id}`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+
         if (activeRes.ok) {
           const activeData = await activeRes.json();
           const allRequests = activeData.requests || [];
 
-          // Active deliveries (accepted/in_transit)
           const active = allRequests
             .filter((r: PickupRequest) =>
               ['accepted', 'in_transit', 'picked_up'].includes(r.status)
@@ -177,13 +191,15 @@ export default function VolunteerPanel() {
               to: r.ngoName || 'Unknown NGO',
               status: r.status as ActiveDelivery['status'],
             }));
+
           setActiveDeliveries(active);
 
-          // Total delivered
           const delivered = allRequests.filter(
             (r: PickupRequest) => r.status === 'delivered'
           ).length;
           setTotalDelivered(delivered);
+        } else {
+          throw new Error('Failed to fetch active requests');
         }
       } catch (error) {
         console.error('Failed to fetch volunteer data:', error);
@@ -194,16 +210,23 @@ export default function VolunteerPanel() {
     };
 
     fetchData();
-  }, [_hasHydrated, user]);
+  }, [_hasHydrated, user, authToken]);
 
   const handleAcceptPickup = async (requestId: string) => {
     if (!user) return;
+    if (!authToken) {
+      toast.error('Session missing/expired. Please login again.');
+      return;
+    }
 
     setAcceptingId(requestId);
     try {
       const res = await fetch('/api/requests', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
         body: JSON.stringify({
           id: requestId,
           volunteerId: user.id,
@@ -213,18 +236,15 @@ export default function VolunteerPanel() {
       });
 
       if (!res.ok) {
-        throw new Error('Failed to accept request');
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'Failed to accept request');
       }
 
       const data = await res.json();
       const acceptedRequest = data.request;
 
-      // Remove from available list
-      setAvailableRequests((prev) =>
-        prev.filter((r) => r.id !== requestId)
-      );
+      setAvailableRequests((prev) => prev.filter((r) => r.id !== requestId));
 
-      // Add to active deliveries
       setActiveDeliveries((prev) => [
         ...prev,
         {
@@ -243,13 +263,16 @@ export default function VolunteerPanel() {
       );
     } catch (error) {
       console.error('Failed to accept pickup:', error);
-      toast.error('Failed to accept pickup request. Please try again.');
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Failed to accept pickup request. Please try again.'
+      );
     } finally {
       setAcceptingId(null);
     }
   };
 
-  // Stats computed from real data
   const stats = [
     {
       label: 'Active Deliveries',
@@ -281,14 +304,12 @@ export default function VolunteerPanel() {
     },
   ];
 
-  // Auth prompt if not logged in
   if (_hasHydrated && !user) {
     return (
       <div className="relative min-h-screen bg-gradient-to-br from-emerald-50/50 via-white to-amber-50/30">
         <FoodPatternBackground />
 
         <div className="relative z-10 mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-          {/* Back button */}
           <button
             onClick={() => setCurrentPage('home')}
             className="mb-6 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -296,7 +317,6 @@ export default function VolunteerPanel() {
             <span>← Back to Home</span>
           </button>
 
-          {/* Header */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -311,7 +331,6 @@ export default function VolunteerPanel() {
             </p>
           </motion.div>
 
-          {/* Auth prompt */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -355,7 +374,6 @@ export default function VolunteerPanel() {
       <FoodPatternBackground />
 
       <div className="relative z-10 mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        {/* Back button */}
         <button
           onClick={() => setCurrentPage('home')}
           className="mb-6 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -363,7 +381,6 @@ export default function VolunteerPanel() {
           <span>← Back to Home</span>
         </button>
 
-        {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -378,7 +395,6 @@ export default function VolunteerPanel() {
           </p>
         </motion.div>
 
-        {/* Stats Row */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -405,7 +421,6 @@ export default function VolunteerPanel() {
         </motion.div>
 
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-5">
-          {/* Available Pickup Requests */}
           <div className="lg:col-span-3">
             <motion.div
               initial={{ opacity: 0, y: 10 }}
@@ -474,9 +489,7 @@ export default function VolunteerPanel() {
                                   <Clock className="h-3.5 w-3.5 shrink-0" />
                                   <span>
                                     {request.createdAt
-                                      ? new Date(
-                                          request.createdAt
-                                        ).toLocaleDateString('en-IN', {
+                                      ? new Date(request.createdAt).toLocaleDateString('en-IN', {
                                           day: 'numeric',
                                           month: 'short',
                                           hour: '2-digit',
@@ -526,7 +539,6 @@ export default function VolunteerPanel() {
             </motion.div>
           </div>
 
-          {/* My Active Deliveries */}
           <div className="lg:col-span-2">
             <motion.div
               initial={{ opacity: 0, y: 10 }}
@@ -571,7 +583,6 @@ export default function VolunteerPanel() {
                               → {delivery.to}
                             </p>
 
-                            {/* Progress Steps */}
                             <div className="relative mb-3">
                               <div className="flex items-center justify-between">
                                 {deliverySteps.map((step, stepIndex) => (
@@ -604,9 +615,7 @@ export default function VolunteerPanel() {
                                   </div>
                                 ))}
                               </div>
-                              {/* Progress bar background */}
                               <div className="absolute top-3.5 left-4 right-4 h-0.5 bg-gray-200 -z-0" />
-                              {/* Progress bar fill */}
                               <div
                                 className="absolute top-3.5 left-4 h-0.5 bg-emerald-500 -z-0 transition-all duration-500"
                                 style={{
