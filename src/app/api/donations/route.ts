@@ -113,11 +113,31 @@ import { requireUid } from '@/lib/firebase/auth-server';
 import { getUserProfile } from '@/lib/firebase/user-server';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+function isFirestoreIndexError(err: any) {
+  const msg = String(err?.message || '');
+  // Firestore index errors usually include FAILED_PRECONDITION + "index" + "create it here"
+  return (
+    msg.includes('FAILED_PRECONDITION') &&
+    (msg.toLowerCase().includes('index') || msg.toLowerCase().includes('create it here'))
+  );
+}
+
+function sortByCreatedAtDesc(items: any[]) {
+  return items.sort((a, b) => {
+    const at = new Date(a.createdAt || 0).getTime();
+    const bt = new Date(b.createdAt || 0).getTime();
+    return bt - at;
+  });
+}
 
 export async function GET(request: NextRequest) {
   try {
     const { db } = getFirebaseAdmin();
-    if (!db) return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
+    if (!db) {
+      return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
+    }
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
@@ -130,11 +150,24 @@ export async function GET(request: NextRequest) {
     if (category) q = q.where('category', '==', category);
     if (donorId) q = q.where('donorId', '==', donorId);
 
-    // You may need Firestore indexes for combinations of filters + orderBy
-    q = q.orderBy('createdAt', 'desc');
+    let donations: any[] = [];
 
-    const snap = await q.get();
-    const donations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    try {
+      // Preferred query (fast + correct ordering). Might require composite index.
+      const snap = await q.orderBy('createdAt', 'desc').get();
+      donations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    } catch (err) {
+      console.error('[Donations GET] Firestore query failed:', err);
+
+      // Fallback: retry without orderBy if this is index-related
+      if (isFirestoreIndexError(err)) {
+        const snap = await q.get();
+        donations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        donations = sortByCreatedAtDesc(donations);
+      } else {
+        throw err;
+      }
+    }
 
     return NextResponse.json({ donations });
   } catch (error) {
@@ -148,21 +181,37 @@ export async function POST(request: NextRequest) {
     const uid = await requireUid(request);
 
     const { db } = getFirebaseAdmin();
-    if (!db) return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
+    if (!db) {
+      return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
+    }
 
     const profile = await getUserProfile(uid);
-    if (!profile) return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
+    if (!profile) {
+      return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
+    }
 
     const body = await request.json();
-    const { foodName, description, quantity, unit, expiryTime, category, imageUrl, address, lat, lng } = body;
+    const {
+      foodName,
+      description,
+      quantity,
+      unit,
+      expiryTime,
+      category,
+      imageUrl,
+      address,
+      lat,
+      lng,
+    } = body;
 
     if (!foodName) {
       return NextResponse.json({ error: 'foodName is required' }, { status: 400 });
     }
 
     const now = new Date().toISOString();
-    const expiryIso =
-      expiryTime ? new Date(expiryTime).toISOString() : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const expiryIso = expiryTime
+      ? new Date(expiryTime).toISOString()
+      : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
     const docRef = await db.collection(COLLECTIONS.donations).add({
       donorId: uid,
@@ -185,10 +234,16 @@ export async function POST(request: NextRequest) {
     });
 
     const donationSnap = await docRef.get();
-    return NextResponse.json({ donation: { id: donationSnap.id, ...donationSnap.data() } }, { status: 201 });
+    return NextResponse.json(
+      { donation: { id: donationSnap.id, ...donationSnap.data() } },
+      { status: 201 }
+    );
   } catch (error: any) {
     const code = error?.message === 'UNAUTHORIZED' ? 401 : 500;
-    return NextResponse.json({ error: code === 401 ? 'Unauthorized' : 'Failed to create donation' }, { status: code });
+    return NextResponse.json(
+      { error: code === 401 ? 'Unauthorized' : 'Failed to create donation' },
+      { status: code }
+    );
   }
 }
 
@@ -197,10 +252,14 @@ export async function PATCH(request: NextRequest) {
     const uid = await requireUid(request);
 
     const { db } = getFirebaseAdmin();
-    if (!db) return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
+    if (!db) {
+      return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
+    }
 
     const profile = await getUserProfile(uid);
-    if (!profile) return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
+    if (!profile) {
+      return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
+    }
 
     const body = await request.json();
     const { id, ...updates } = body;
@@ -231,7 +290,10 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ donation: { id, ...updated } });
   } catch (error: any) {
     const code = error?.message === 'UNAUTHORIZED' ? 401 : 500;
-    return NextResponse.json({ error: code === 401 ? 'Unauthorized' : 'Failed to update donation' }, { status: code });
+    return NextResponse.json(
+      { error: code === 401 ? 'Unauthorized' : 'Failed to update donation' },
+      { status: code }
+    );
   }
 }
 
@@ -240,10 +302,14 @@ export async function DELETE(request: NextRequest) {
     const uid = await requireUid(request);
 
     const { db } = getFirebaseAdmin();
-    if (!db) return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
+    if (!db) {
+      return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
+    }
 
     const profile = await getUserProfile(uid);
-    if (!profile) return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
+    if (!profile) {
+      return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
+    }
 
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
@@ -265,6 +331,9 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error: any) {
     const code = error?.message === 'UNAUTHORIZED' ? 401 : 500;
-    return NextResponse.json({ error: code === 401 ? 'Unauthorized' : 'Failed to delete donation' }, { status: code });
+    return NextResponse.json(
+      { error: code === 401 ? 'Unauthorized' : 'Failed to delete donation' },
+      { status: code }
+    );
   }
 }

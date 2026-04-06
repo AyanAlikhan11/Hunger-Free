@@ -11,6 +11,10 @@ import { FoodPatternBackground } from '@/components/shared/food-pattern';
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
 
+// Firebase client auth (Google)
+import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { firebaseAuth, isFirebaseConfigured } from '@/lib/firebase/config';
+
 const demoRoles = [
   { label: 'Login as Donor', email: 'rajesh@gmail.com', icon: Apple, color: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' },
   { label: 'Login as NGO', email: 'priya@gmail.com', icon: HandHelping, color: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' },
@@ -18,6 +22,17 @@ const demoRoles = [
   { label: 'Login as Farmer', email: 'sunita@gmail.com', icon: Sprout, color: 'bg-lime-50 text-lime-700 border-lime-200 hover:bg-lime-100' },
   { label: 'Login as Admin', email: 'admin@hungerfree.org', icon: Shield, color: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100' },
 ];
+
+function GoogleIcon(props: React.ComponentProps<'svg'>) {
+  return (
+    <svg viewBox="0 0 48 48" {...props}>
+      <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12s5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24s8.955,20,20,20s20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z" />
+      <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z" />
+      <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.222,0-9.618-3.317-11.28-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z" />
+      <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.574l6.19,5.238C42.418,34.569,44,30.035,44,24C44,22.659,43.862,21.35,43.611,20.083z" />
+    </svg>
+  );
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -28,6 +43,53 @@ export default function LoginPage() {
   const [error, setError] = useState('');
 
   const { login, setCurrentPage } = useAppStore();
+
+  const handleGoogleLogin = async () => {
+    setError('');
+    setIsLoading(true);
+
+    try {
+      if (!isFirebaseConfigured || !firebaseAuth) {
+        throw new Error('Google Sign-In is not configured.');
+      }
+
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(firebaseAuth, provider);
+      const idToken = await result.user.getIdToken();
+
+      const response = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'login-google', idToken }),
+      });
+
+      const data = await response.json();
+
+      if (data.error) {
+        setError(data.error);
+        return;
+      }
+
+      // If user is new and role is required, move to signup and prefill
+      if (data.status === 'role_required') {
+        sessionStorage.setItem('hf_google_pending', JSON.stringify({ idToken, name: data.name, email: data.email }));
+        toast.info('Please select a role to complete signup.');
+        setCurrentPage('signup');
+        return;
+      }
+
+      if (data.user) {
+        login(data.user, data.token);
+        toast.success(`Welcome back, ${data.user.name}!`, {
+          description: `Signed in as ${data.user.role.charAt(0).toUpperCase() + data.user.role.slice(1)}`,
+        });
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Google Sign-In failed. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,25 +172,7 @@ export default function LoginPage() {
           <div className="flex flex-col lg:flex-row">
             {/* Left decorative panel - hidden on mobile */}
             <div className="hidden lg:flex lg:w-5/12 bg-gradient-to-br from-emerald-600 via-emerald-700 to-emerald-800 p-8 xl:p-12 flex-col justify-between relative overflow-hidden">
-              {/* SVG decorative patterns */}
-              <svg className="absolute top-10 left-10 w-32 h-32 text-emerald-500/20" viewBox="0 0 100 100" fill="currentColor">
-                <ellipse cx="50" cy="50" rx="8" ry="18" transform="rotate(-30 50 50)" />
-                <ellipse cx="50" cy="50" rx="8" ry="18" transform="rotate(10 50 50)" />
-                <ellipse cx="50" cy="50" rx="8" ry="18" transform="rotate(50 50 50)" />
-                <line x1="50" y1="20" x2="50" y2="80" strokeWidth="2" />
-              </svg>
-              <svg className="absolute bottom-20 right-10 w-24 h-24 text-emerald-400/15" viewBox="0 0 100 100" fill="currentColor">
-                <circle cx="50" cy="55" r="30" />
-                <rect x="46" y="15" width="8" height="25" rx="4" />
-              </svg>
-              <svg className="absolute top-1/3 right-16 w-20 h-20 text-amber-400/15 animate-float" viewBox="0 0 100 100" fill="currentColor">
-                <path d="M50 10 Q80 40 50 90 Q20 40 50 10 Z" />
-                <line x1="50" y1="20" x2="50" y2="80" stroke="currentColor" strokeWidth="2" fill="none" />
-              </svg>
-              <div className="absolute top-1/2 left-1/4 w-3 h-3 rounded-full bg-amber-400/20 animate-pulse-soft" />
-              <div className="absolute bottom-1/3 right-1/3 w-2 h-2 rounded-full bg-white/10 animate-pulse-soft stagger-2" />
-
-              {/* Content */}
+              {/* ... unchanged left panel ... */}
               <div className="relative z-10">
                 <div className="flex items-center gap-3 mb-4">
                   <div className="w-10 h-10 rounded-lg bg-white/20 backdrop-blur-sm flex items-center justify-center">
@@ -144,26 +188,20 @@ export default function LoginPage() {
                   Join our mission to reduce food waste and feed those in need. Every meal shared is a step towards a hunger-free world.
                 </p>
               </div>
-
-              <div className="relative z-10">
-                <div className="grid grid-cols-2 gap-4">
-                  {[
-                    { value: '12K+', label: 'Meals Donated' },
-                    { value: '500+', label: 'Active Donors' },
-                    { value: '300+', label: 'NGOs Served' },
-                    { value: '50+', label: 'Volunteers' },
-                  ].map((stat) => (
-                    <div key={stat.label} className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
-                      <div className="text-2xl font-bold text-white">{stat.value}</div>
-                      <div className="text-emerald-200/70 text-xs mt-1">{stat.label}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </div>
 
             {/* Right form panel */}
             <div className="flex-1 p-6 sm:p-8 xl:p-12">
+              <div className="mb-4">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage('home')}
+                  className="text-sm text-emerald-600 hover:text-emerald-700 font-medium transition-colors"
+                >
+                  ← Back to Home
+                </button>
+              </div>
+
               <CardHeader className="p-0 mb-6 gap-2">
                 <div className="lg:hidden flex items-center gap-2 mb-4">
                   <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center">
@@ -180,6 +218,26 @@ export default function LoginPage() {
               </CardHeader>
 
               <CardContent className="p-0">
+                {/* Google button (added) */}
+                <div className="space-y-4 mb-5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleGoogleLogin}
+                    disabled={isLoading}
+                    className="w-full h-11 border-gray-200 bg-white hover:bg-gray-50 text-gray-700 font-medium"
+                  >
+                    <GoogleIcon className="w-5 h-5 mr-2" />
+                    Continue with Google
+                  </Button>
+
+                  <div className="flex items-center">
+                    <div className="flex-1 border-t border-gray-200" />
+                    <span className="px-3 text-xs text-gray-400">OR</span>
+                    <div className="flex-1 border-t border-gray-200" />
+                  </div>
+                </div>
+
                 <form onSubmit={handleSubmit} className="space-y-5">
                   {error && (
                     <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3">
@@ -275,7 +333,10 @@ export default function LoginPage() {
                   {/* Demo hint */}
                   <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-center">
                     <p className="text-xs text-amber-700">
-                      Demo: use any email with password <code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono text-amber-800">&apos;password&apos;</code>
+                      Demo: use any email with password{' '}
+                      <code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono text-amber-800">
+                        &apos;password&apos;
+                      </code>
                     </p>
                   </div>
 

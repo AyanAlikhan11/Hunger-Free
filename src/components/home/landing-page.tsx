@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { motion, useInView } from 'framer-motion';
 import { useAppStore } from '@/lib/store';
 import { FoodPatternBackground } from '@/components/shared/food-pattern';
@@ -21,6 +21,7 @@ import {
   Package,
   Users,
   HandHelping,
+  Clock,
 } from 'lucide-react';
 
 /* ────────────────────────────── animation helpers ────────────────────────── */
@@ -170,6 +171,42 @@ const features = [
   },
 ];
 
+/* ────────────────────────────── donation helpers ────────────────────────── */
+
+type HomeDonation = {
+  id: string;
+  foodName: string;
+  donorName: string;
+  category: string;
+  quantity: string;
+  unit: string;
+  expiryTime: string;
+  address?: string;
+};
+
+function timeUntil(expiryIso: string) {
+  const now = Date.now();
+  const exp = new Date(expiryIso).getTime();
+  if (Number.isNaN(exp)) return 'N/A';
+  const diff = exp - now;
+  if (diff <= 0) return 'Expired';
+
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  const days = Math.floor(hours / 24);
+
+  if (days > 0) return `${days} day${days > 1 ? 's' : ''}`;
+  return `${Math.max(hours, 1)} hour${hours !== 1 ? 's' : ''}`;
+}
+
+const categoryGradient: Record<string, string> = {
+  'Cooked Food': 'from-orange-100 to-amber-50',
+  Vegetables: 'from-green-100 to-emerald-50',
+  'Fruits & Dairy': 'from-pink-100 to-rose-50',
+  Grains: 'from-amber-100 to-yellow-50',
+  Bakery: 'from-yellow-100 to-orange-50',
+  Other: 'from-gray-100 to-gray-50',
+};
+
 /* ══════════════════════════════════════════════════════════════════════════
    LandingPage
    ══════════════════════════════════════════════════════════════════════════ */
@@ -181,6 +218,48 @@ export default function LandingPage() {
     setCurrentPage(page);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  // NEW: Recent donations for home page
+  const [recentDonations, setRecentDonations] = useState<HomeDonation[]>([]);
+  const [donationLoading, setDonationLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchRecent() {
+      try {
+        setDonationLoading(true);
+        const res = await fetch('/api/donations?status=available', { cache: 'no-store' });
+        const data = await res.json();
+
+        if (!res.ok) throw new Error(data?.error || 'Failed to fetch donations');
+
+        const list = (data?.donations || []) as any[];
+        const mapped: HomeDonation[] = list.slice(0, 6).map((d) => ({
+          id: d.id,
+          foodName: d.foodName,
+          donorName: d.donorName,
+          category: d.category || 'Other',
+          quantity: String(d.quantity || '0'),
+          unit: d.unit || '',
+          expiryTime: d.expiryTime,
+          address: d.address || '',
+        }));
+
+        if (!cancelled) setRecentDonations(mapped);
+      } catch (e) {
+        if (!cancelled) setRecentDonations([]);
+        // keep silent on home page; optional: console.error(e)
+      } finally {
+        if (!cancelled) setDonationLoading(false);
+      }
+    }
+
+    fetchRecent();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-white">
@@ -281,12 +360,10 @@ export default function LandingPage() {
               aria-hidden="true"
             >
               <div className="relative w-full max-w-md aspect-square">
-                {/* Large background circle */}
                 <div className="absolute inset-0 rounded-full bg-gradient-to-br from-emerald-100 to-amber-50 opacity-60" />
                 <div className="absolute inset-6 rounded-full bg-gradient-to-tr from-emerald-200/70 to-amber-100/70" />
                 <div className="absolute inset-14 rounded-full bg-white/60 backdrop-blur-sm" />
 
-                {/* Abstract food shapes */}
                 <div className="absolute top-8 right-12 w-20 h-20 rounded-2xl bg-emerald-500/20 rotate-12 animate-pulse" />
                 <div className="absolute bottom-16 left-8 w-16 h-16 rounded-full bg-amber-400/25 -rotate-6 animate-pulse delay-500" />
                 <div className="absolute top-1/3 left-4 w-12 h-12 rounded-xl bg-emerald-600/15 rotate-[25deg]" />
@@ -294,7 +371,6 @@ export default function LandingPage() {
                 <div className="absolute top-16 left-16 w-10 h-10 rounded-full bg-emerald-400/20" />
                 <div className="absolute bottom-24 right-16 w-8 h-8 rounded-lg bg-amber-300/25 rotate-45" />
 
-                {/* Center icon cluster */}
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="flex items-center gap-3">
                     <div className="w-16 h-16 rounded-2xl bg-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-600/30">
@@ -306,7 +382,6 @@ export default function LandingPage() {
                   </div>
                 </div>
 
-                {/* Connecting dots */}
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-40 h-40">
                   <div className="absolute top-0 left-1/2 w-2 h-2 rounded-full bg-emerald-400/40" />
                   <div className="absolute bottom-0 left-1/2 w-2 h-2 rounded-full bg-amber-400/40" />
@@ -319,11 +394,93 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ───── NEW: Latest Available Donations ───── */}
+      <Section id="latest-donations" className="py-20 lg:py-28 bg-gray-50/70">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <motion.div className="flex items-end justify-between gap-6 mb-10" variants={fadeUp} custom={0}>
+            <div>
+              <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 tracking-tight">
+                Latest Available Donations
+              </h2>
+              <p className="mt-3 text-gray-600 max-w-2xl text-lg">
+                Fresh donations listed recently—NGOs can request pickups, volunteers can deliver.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => navigate('available-food')}
+              className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+            >
+              View All
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </motion.div>
+
+          {donationLoading ? (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Card key={i} className="border-0 shadow-md">
+                  <CardContent className="p-6">
+                    <div className="h-4 w-2/3 bg-gray-200 rounded animate-pulse" />
+                    <div className="mt-3 h-4 w-1/2 bg-gray-200 rounded animate-pulse" />
+                    <div className="mt-6 h-10 w-full bg-gray-200 rounded animate-pulse" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : recentDonations.length === 0 ? (
+            <Card className="border-0 shadow-md">
+              <CardContent className="p-10 text-center text-gray-600">
+                No available donations right now. Check back soon!
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {recentDonations.map((d, i) => (
+                <motion.div key={d.id} variants={scaleIn} custom={i}>
+                  <Card className="border-0 shadow-md hover:shadow-xl transition-shadow duration-300 overflow-hidden">
+                    <div className={`h-20 bg-gradient-to-br ${categoryGradient[d.category] || categoryGradient.Other}`} />
+                    <CardContent className="p-6 space-y-3">
+                      <div>
+                        <p className="text-base font-semibold text-gray-900 line-clamp-1">{d.foodName}</p>
+                        <p className="text-sm text-gray-500">
+                          {d.quantity} {d.unit} • {d.category}
+                        </p>
+                      </div>
+
+                      <div className="space-y-2 text-sm text-gray-600">
+                        <div className="flex items-center gap-2">
+                          <Users className="h-4 w-4 text-emerald-600" />
+                          <span className="line-clamp-1">{d.donorName}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <MapPin className="h-4 w-4 text-emerald-600" />
+                          <span className="line-clamp-1">{d.address || 'Unknown location'}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Clock className="h-4 w-4 text-amber-600" />
+                          <span>Expires in {timeUntil(d.expiryTime)}</span>
+                        </div>
+                      </div>
+
+                      <Button
+                        onClick={() => navigate('available-food')}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
+                      >
+                        Request / View Details
+                        <ArrowRight className="ml-2 h-4 w-4" />
+                      </Button>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Section>
+
       {/* ───── 2. How It Works ───── */}
-      <Section
-        id="how-it-works"
-        className="py-20 lg:py-28 bg-gray-50/70"
-      >
+      <Section id="how-it-works" className="py-20 lg:py-28 bg-gray-50/70">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div className="text-center mb-16" variants={fadeUp} custom={0}>
             <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 tracking-tight">
@@ -335,19 +492,12 @@ export default function LandingPage() {
           </motion.div>
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-8 relative">
-            {/* Connector line (desktop) */}
             <div className="hidden lg:block absolute top-[60px] left-[calc(12.5%+20px)] right-[calc(12.5%+20px)] h-[2px] bg-gradient-to-r from-emerald-200 via-emerald-300 to-emerald-200" />
 
             {steps.map((step, i) => (
-              <motion.div
-                key={step.num}
-                variants={scaleIn}
-                custom={i}
-                className="relative"
-              >
+              <motion.div key={step.num} variants={scaleIn} custom={i} className="relative">
                 <Card className="relative z-10 text-center pt-8 pb-6 h-full border-0 shadow-md hover:shadow-xl transition-shadow duration-300">
                   <CardContent className="flex flex-col items-center gap-4 px-6">
-                    {/* Number + icon */}
                     <div className="relative">
                       <div className="w-16 h-16 rounded-2xl bg-emerald-600 flex items-center justify-center shadow-md shadow-emerald-600/20">
                         <step.icon className="h-7 w-7 text-white" />
@@ -356,12 +506,8 @@ export default function LandingPage() {
                         {step.num}
                       </span>
                     </div>
-                    <h3 className="text-lg font-semibold text-gray-900">
-                      {step.title}
-                    </h3>
-                    <p className="text-sm text-gray-500 leading-relaxed">
-                      {step.desc}
-                    </p>
+                    <h3 className="text-lg font-semibold text-gray-900">{step.title}</h3>
+                    <p className="text-sm text-gray-500 leading-relaxed">{step.desc}</p>
                   </CardContent>
                 </Card>
               </motion.div>
@@ -384,12 +530,7 @@ export default function LandingPage() {
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {impactStats.map((stat, i) => (
-              <motion.div
-                key={stat.label}
-                variants={scaleIn}
-                custom={i}
-                className="group"
-              >
+              <motion.div key={stat.label} variants={scaleIn} custom={i} className="group">
                 <Card className={`${stat.bg} text-white border-0 overflow-hidden hover:scale-[1.03] transition-transform duration-300 shadow-lg`}>
                   <CardContent className="flex flex-col items-center gap-3 py-8 px-6 text-center">
                     <div className="w-14 h-14 rounded-xl bg-white/20 flex items-center justify-center">
@@ -406,10 +547,7 @@ export default function LandingPage() {
       </Section>
 
       {/* ───── 4. Features ───── */}
-      <Section
-        id="features"
-        className="py-20 lg:py-28 bg-gray-50/70"
-      >
+      <Section id="features" className="py-20 lg:py-28 bg-gray-50/70">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div className="text-center mb-16" variants={fadeUp} custom={0}>
             <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 tracking-tight">
@@ -422,12 +560,7 @@ export default function LandingPage() {
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {features.map((feat, i) => (
-              <motion.div
-                key={feat.title}
-                variants={scaleIn}
-                custom={i}
-                className="group"
-              >
+              <motion.div key={feat.title} variants={scaleIn} custom={i} className="group">
                 <Card className="h-full border-0 shadow-md hover:shadow-xl transition-all duration-300 hover:-translate-y-1">
                   <CardContent className="p-6 flex flex-col gap-4">
                     <div className="w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center group-hover:bg-emerald-100 transition-colors">
@@ -457,7 +590,6 @@ export default function LandingPage() {
             custom={0}
             className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-emerald-600 to-teal-600 px-6 py-16 sm:px-12 sm:py-20 text-center shadow-2xl"
           >
-            {/* Decorative elements */}
             <div className="absolute top-0 left-0 w-64 h-64 bg-white/5 rounded-full -translate-x-1/2 -translate-y-1/2" />
             <div className="absolute bottom-0 right-0 w-80 h-80 bg-white/5 rounded-full translate-x-1/3 translate-y-1/3" />
             <div className="absolute top-1/2 left-1/4 w-32 h-32 bg-white/5 rounded-full" />
