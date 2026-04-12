@@ -20,7 +20,16 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { FoodPatternBackground } from '@/components/shared/food-pattern';
 import { useAppStore } from '@/lib/store';
-import DeliveryMap from '@/components/maps/delivery-map';
+import dynamic from 'next/dynamic';
+
+const DeliveryMap = dynamic(() => import('@/components/maps/delivery-map'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-[220px] rounded-lg border border-dashed flex items-center justify-center text-sm text-muted-foreground">
+      Loading map...
+    </div>
+  ),
+});
 
 interface PickupRequest {
   id: string;

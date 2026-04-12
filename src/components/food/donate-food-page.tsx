@@ -32,7 +32,16 @@ import {
 } from '@/components/ui/card';
 import { FoodPatternBackground } from '@/components/shared/food-pattern';
 import { useAppStore } from '@/lib/store';
-import MapPicker from '@/components/maps/map-picker';
+import dynamic from 'next/dynamic';
+
+const MapPicker = dynamic(() => import('@/components/maps/map-picker'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-60 rounded-lg border border-dashed flex items-center justify-center text-sm text-muted-foreground">
+      Loading map...
+    </div>
+  ),
+});
 
 const categories = [
   'Cooked Food',

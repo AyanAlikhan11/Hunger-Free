@@ -1,5 +1,6 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useAppStore } from '@/lib/store';
 import { Navbar } from '@/components/layout/navbar';
 import { Footer } from '@/components/layout/footer';
@@ -8,13 +9,28 @@ import LandingPage from '@/components/home/landing-page';
 import LoginPage from '@/components/auth/login-page';
 import SignupPage from '@/components/auth/signup-page';
 import { DashboardRouter } from '@/components/dashboard/dashboards';
-import DonateFoodPage from '@/components/food/donate-food-page';
 import AvailableFoodPage from '@/components/food/available-food-page';
 import MarketplacePage from '@/components/marketplace/marketplace-page';
-import VolunteerPanel from '@/components/dashboard/volunteer-panel';
 import AboutPage from '@/components/pages/about-page';
 import ContactPage from '@/components/pages/contact-page';
 import { Apple } from 'lucide-react';
+
+// ✅ Leaflet pages MUST be dynamically imported with SSR disabled
+const DonateFoodPage = dynamic(() => import('@/components/food/donate-food-page'), {
+  ssr: false,
+  loading: () => (
+    <div className="p-8 text-sm text-muted-foreground">Loading donate page...</div>
+  ),
+});
+
+// NOTE: keep the path exactly as in your project.
+// You currently import VolunteerPanel from: '@/components/dashboard/volunteer-panel'
+const VolunteerPanel = dynamic(() => import('@/components/dashboard/volunteer-panel'), {
+  ssr: false,
+  loading: () => (
+    <div className="p-8 text-sm text-muted-foreground">Loading volunteer panel...</div>
+  ),
+});
 
 function LoadingSkeleton() {
   return (
@@ -68,10 +84,14 @@ export default function Home() {
           {currentPage === 'about' && <AboutPage />}
           {currentPage === 'contact' && <ContactPage />}
           {currentPage === 'dashboard' && <DashboardRouter />}
+
+          {/* ✅ Leaflet pages loaded client-only */}
           {currentPage === 'donate-food' && <DonateFoodPage />}
+          {currentPage === 'volunteer' && <VolunteerPanel />}
+
           {currentPage === 'available-food' && <AvailableFoodPage />}
           {currentPage === 'marketplace' && <MarketplacePage />}
-          {currentPage === 'volunteer' && <VolunteerPanel />}
+
           {currentPage === 'admin' && <DashboardRouter />}
         </div>
       </main>
