@@ -111,17 +111,30 @@ import { getFirebaseAdmin } from '@/lib/firebase/server';
 import { COLLECTIONS } from '@/lib/firebase/collections';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+function canBeAdmin(email: string) {
+  return ADMIN_EMAILS.includes(email);
+}
 
 async function firebaseAuthPost(endpoint: string, body: any) {
   if (!API_KEY) throw new Error('Missing NEXT_PUBLIC_FIREBASE_API_KEY');
 
-  const res = await fetch(`https://identitytoolkit.googleapis.com/v1/${endpoint}?key=${API_KEY}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const res = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/${endpoint}?key=${API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }
+  );
 
   const data = await res.json();
   if (!res.ok) throw new Error(data?.error?.message || 'Firebase Auth error');
@@ -146,63 +159,84 @@ export async function POST(request: NextRequest) {
     const { action } = body;
 
     const { db, auth } = getFirebaseAdmin();
-    if (!db || !auth) return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
+    if (!db || !auth) {
+      return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
+    }
 
-    // --- GOOGLE LOGIN ---
+    // ─────────────────────────────────────────────────────────────
+    // GOOGLE LOGIN / SIGNUP (client sends Firebase ID token)
+    // ─────────────────────────────────────────────────────────────
     if (action === 'login-google') {
-      const { idToken, role: clientRole } = body;
-      if (!idToken) return NextResponse.json({ error: 'Google ID token required' }, { status: 400 });
+      const { idToken, role: clientRole, phone: clientPhone } = body;
+      if (!idToken) {
+        return NextResponse.json({ error: 'Google ID token required' }, { status: 400 });
+      }
 
       const decoded = await auth.verifyIdToken(idToken);
       const uid = decoded.uid;
-      const email = decoded.email!;
-      const name = decoded.name!;
 
-      const userSnap = await db.collection(COLLECTIONS.users).doc(uid).get();
+      const email = decoded.email || '';
+      const name = decoded.name || (email ? email.split('@')[0] : 'User');
+
+      const userRef = db.collection(COLLECTIONS.users).doc(uid);
+      const userSnap = await userRef.get();
 
       if (!userSnap.exists) {
+        // Need role to create profile
         if (!clientRole) {
-          // If no role, need to ask user which role they are
-          // We can't auto-create profile without role. Respond with status to prompt role selection.
           return NextResponse.json({
             status: 'role_required',
             name,
             email,
-            idToken,
           });
         }
 
+        // Restrict admin role
+        if (clientRole === 'admin' && !canBeAdmin(email)) {
+          return NextResponse.json({ error: 'Admin role is restricted.' }, { status: 403 });
+        }
+
         const now = new Date().toISOString();
-        await db.collection(COLLECTIONS.users).doc(uid).set({
+        await userRef.set({
           name,
           email,
           role: clientRole,
-          phone: null,
+          phone: clientPhone || null,
           address: null,
           lat: null,
           lng: null,
+          isActive: true,
           createdAt: now,
           updatedAt: now,
         });
 
-        const newDoc = { name, email, role: clientRole, createdAt: now };
         return NextResponse.json({
-          user: userToResponse(newDoc, uid),
+          user: userToResponse({ name, email, role: clientRole, phone: clientPhone, createdAt: now }, uid),
           token: idToken,
         });
       }
 
       const userDoc = userSnap.data() as any;
+
+      if (userDoc.isActive === false) {
+        return NextResponse.json({ error: 'Account disabled. Contact support.' }, { status: 403 });
+      }
+
       return NextResponse.json({
         user: userToResponse(userDoc, uid),
         token: idToken,
       });
     }
 
-    // --- LOGIN ---
+    // ─────────────────────────────────────────────────────────────
+    // EMAIL/PASSWORD LOGIN
+    // ─────────────────────────────────────────────────────────────
     if (action === 'login') {
       const { email, password } = body;
-      if (!email || !password) return NextResponse.json({ error: 'Email and password are required.' }, { status: 400 });
+
+      if (!email || !password) {
+        return NextResponse.json({ error: 'Email and password are required.' }, { status: 400 });
+      }
 
       const signIn = await firebaseAuthPost('accounts:signInWithPassword', {
         email,
@@ -211,11 +245,13 @@ export async function POST(request: NextRequest) {
       });
 
       const uid = signIn.localId as string;
-      const userSnap = await db.collection(COLLECTIONS.users).doc(uid).get();
+      const userRef = db.collection(COLLECTIONS.users).doc(uid);
+      const snap = await userRef.get();
 
-      if (!userSnap.exists) {
+      if (!snap.exists) {
+        // If profile missing, auto-create as donor
         const now = new Date().toISOString();
-        await db.collection(COLLECTIONS.users).doc(uid).set({
+        await userRef.set({
           name: signIn.displayName || email.split('@')[0],
           email,
           role: 'donor',
@@ -223,23 +259,40 @@ export async function POST(request: NextRequest) {
           address: null,
           lat: null,
           lng: null,
+          isActive: true,
           createdAt: now,
           updatedAt: now,
         });
       }
 
-      const userDoc = (await db.collection(COLLECTIONS.users).doc(uid).get()).data() as any;
+      const userDoc = (await userRef.get()).data() as any;
+
+      if (userDoc.isActive === false) {
+        return NextResponse.json({ error: 'Account disabled. Contact support.' }, { status: 403 });
+      }
+
       return NextResponse.json({
         user: userToResponse(userDoc, uid),
         token: signIn.idToken,
       });
     }
 
-    // --- SIGNUP ---
+    // ─────────────────────────────────────────────────────────────
+    // EMAIL/PASSWORD SIGNUP
+    // ─────────────────────────────────────────────────────────────
     if (action === 'signup') {
       const { email, password, name, role, phone } = body;
+
       if (!email || !password || !name || !role) {
         return NextResponse.json({ error: 'All required fields missing' }, { status: 400 });
+      }
+
+      if (role === 'admin' && !canBeAdmin(email)) {
+        return NextResponse.json({ error: 'Admin role is restricted.' }, { status: 403 });
+      }
+
+      if (password.length < 6) {
+        return NextResponse.json({ error: 'Password must be at least 6 characters long.' }, { status: 400 });
       }
 
       const signUp = await firebaseAuthPost('accounts:signUp', {
@@ -259,6 +312,7 @@ export async function POST(request: NextRequest) {
         address: null,
         lat: null,
         lng: null,
+        isActive: true,
         createdAt: now,
         updatedAt: now,
       });
@@ -269,12 +323,21 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // ─────────────────────────────────────────────────────────────
+    // LOGOUT (client-side for Firebase; keep endpoint for your store)
+    // ─────────────────────────────────────────────────────────────
     if (action === 'logout') {
       return NextResponse.json({ success: true });
     }
 
-    return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
+    return NextResponse.json(
+      { error: 'Invalid action. Use login, signup, login-google, or logout.' },
+      { status: 400 }
+    );
   } catch (error: any) {
-    return NextResponse.json({ error: error?.message || 'Internal server error' }, { status: 500 });
+    return NextResponse.json(
+      { error: error?.message || 'Internal server error' },
+      { status: 500 }
+    );
   }
 }

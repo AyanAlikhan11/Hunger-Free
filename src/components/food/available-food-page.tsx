@@ -29,13 +29,19 @@ import {
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { FoodPatternBackground } from '@/components/shared/food-pattern';
 import { useAppStore } from '@/lib/store';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 
 interface Donation {
   id: string;
@@ -47,8 +53,18 @@ interface Donation {
   location: string;
   expiry: string;
   expiryTime: string;
-  status: 'available' | 'claimed' | 'delivered';
+  status: 'available' | 'claimed' | 'delivered' | 'picked_up' | 'expired';
+  deliveryMode?: 'ngo' | 'direct';
 }
+
+type Beneficiary = {
+  id: string;
+  fullName: string;
+  phone?: string | null;
+  address: string;
+  lat?: number | null;
+  lng?: number | null;
+};
 
 function calculateExpiry(expiryTime: string): string {
   const now = Date.now();
@@ -60,10 +76,8 @@ function calculateExpiry(expiryTime: string): string {
   const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
   const diffDays = Math.floor(diffHours / 24);
 
-  if (diffDays > 0) {
-    return `${diffDays} day${diffDays > 1 ? 's' : ''}`;
-  }
-  return `${diffHours} hour${diffHours > 1 ? 's' : ''}`;
+  if (diffDays > 0) return `${diffDays} day${diffDays > 1 ? 's' : ''}`;
+  return `${Math.max(diffHours, 1)} hour${diffHours > 1 ? 's' : ''}`;
 }
 
 const categoryIcons: Record<string, React.ReactNode> = {
@@ -114,39 +128,39 @@ export default function AvailableFoodPage() {
   const [donations, setDonations] = useState<Donation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Direct delivery dialog state
+  const [directDialogOpen, setDirectDialogOpen] = useState(false);
+  const [directDonation, setDirectDonation] = useState<Donation | null>(null);
+  const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([]);
+  const [beneficiaryId, setBeneficiaryId] = useState<string>('');
+  const [loadingBeneficiaries, setLoadingBeneficiaries] = useState(false);
+
+  // Inline create beneficiary
+  const [newBName, setNewBName] = useState('');
+  const [newBPhone, setNewBPhone] = useState('');
+  const [newBAddress, setNewBAddress] = useState('');
+  const [creatingB, setCreatingB] = useState(false);
+
   useEffect(() => {
     async function fetchDonations() {
       try {
         setIsLoading(true);
-        const response = await fetch('/api/donations?status=available');
+        const response = await fetch('/api/donations?status=available', { cache: 'no-store' });
         if (response.ok) {
           const data = await response.json();
           const mapped: Donation[] = (data.donations || []).map(
-            (d: {
-              id: string;
-              foodName: string;
-              category: string;
-              quantity: string;
-              unit: string;
-              description: string;
-              donorName: string;
-              address: string;
-              expiryTime: string;
-              status: string;
-              location?: { address?: string };
-            }) => ({
+            (d: any) => ({
               id: d.id,
               name: d.foodName,
               category: d.category,
               quantity: `${d.quantity} ${d.unit}`,
               description: d.description,
               donor: d.donorName,
-              location: d.address || d.location?.address || 'Unknown',
+              location: d.address || d.location?.address || 'Nearby',
               expiry: calculateExpiry(d.expiryTime),
               expiryTime: d.expiryTime,
-              status:
-                (d.status as Donation['status']) ||
-                'available',
+              status: (d.status as Donation['status']) || 'available',
+              deliveryMode: d.deliveryMode || 'ngo',
             })
           );
           setDonations(mapped);
@@ -163,7 +177,6 @@ export default function AvailableFoodPage() {
   const filteredDonations = useMemo(() => {
     let results = [...donations];
 
-    // Search filter
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       results = results.filter(
@@ -174,67 +187,15 @@ export default function AvailableFoodPage() {
       );
     }
 
-    // Category filter
-    if (categoryFilter !== 'all') {
-      results = results.filter((d) => d.category === categoryFilter);
-    }
+    if (categoryFilter !== 'all') results = results.filter((d) => d.category === categoryFilter);
+    if (statusFilter !== 'all') results = results.filter((d) => d.status === statusFilter);
 
-    // Status filter
-    if (statusFilter !== 'all') {
-      results = results.filter((d) => d.status === statusFilter);
-    }
-
-    // Sort
-    if (sortBy === 'newest') {
-      results = results;
-    } else if (sortBy === 'expiry-soon') {
-      results.sort((a, b) => {
-        return (
-          new Date(a.expiryTime).getTime() -
-          new Date(b.expiryTime).getTime()
-        );
-      });
+    if (sortBy === 'expiry-soon') {
+      results.sort((a, b) => new Date(a.expiryTime).getTime() - new Date(b.expiryTime).getTime());
     }
 
     return results;
   }, [searchQuery, categoryFilter, statusFilter, sortBy, donations]);
-
-  const handleRequestPickup = async (donation: Donation) => {
-  if (!user || user.role !== 'ngo') {
-    toast.error('Only NGO users can request pickups. Please login as an NGO.');
-    return;
-  }
-  if (!authToken) {
-    toast.error('Session missing/expired. Please login again.');
-    return;
-  }
-
-  try {
-    const requestRes = await fetch('/api/requests', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${authToken}`,
-      },
-      body: JSON.stringify({
-        donationId: donation.id,
-        // do NOT send ngoId/ngoName anymore
-      }),
-    });
-
-    if (!requestRes.ok) {
-      const data = await requestRes.json().catch(() => null);
-      throw new Error(data?.error || 'Failed to create pickup request');
-    }
-
-    // Remove from local list (since this page shows "available" donations)
-    setDonations((prev) => prev.filter((d) => d.id !== donation.id));
-
-    toast.success(`Pickup request sent for "${donation.name}"!`);
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : 'Something went wrong. Please try again.');
-  }
-};
 
   const isExpiringSoon = (expiry: string) => {
     const match = expiry.match(/(\d+)\s*(hour|day)/i);
@@ -249,12 +210,128 @@ export default function AvailableFoodPage() {
 
   const isUserNgo = isAuthenticated && user?.role === 'ngo';
 
+  const fetchBeneficiaries = async () => {
+    if (!authToken) return;
+    setLoadingBeneficiaries(true);
+    try {
+      const res = await fetch('/api/beneficiaries', {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Failed to load beneficiaries');
+      setBeneficiaries(data.beneficiaries || []);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to load beneficiaries');
+    } finally {
+      setLoadingBeneficiaries(false);
+    }
+  };
+
+  const createBeneficiary = async () => {
+    if (!authToken) return;
+    if (!newBName || !newBAddress) {
+      toast.error('Beneficiary name and address are required');
+      return;
+    }
+
+    setCreatingB(true);
+    try {
+      const res = await fetch('/api/beneficiaries', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          fullName: newBName,
+          phone: newBPhone || undefined,
+          address: newBAddress,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Failed to create beneficiary');
+
+      toast.success('Beneficiary created');
+      setNewBName('');
+      setNewBPhone('');
+      setNewBAddress('');
+      await fetchBeneficiaries();
+
+      if (data?.beneficiary?.id) setBeneficiaryId(data.beneficiary.id);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to create beneficiary');
+    } finally {
+      setCreatingB(false);
+    }
+  };
+
+  const requestPickup = async (donation: Donation, beneficiaryId?: string) => {
+    if (!user || user.role !== 'ngo') {
+      toast.error('Only NGO users can request pickups. Please login as an NGO.');
+      return;
+    }
+    if (!authToken) {
+      toast.error('Session missing/expired. Please login again.');
+      return;
+    }
+
+    const res = await fetch('/api/requests', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({
+        donationId: donation.id,
+        ...(beneficiaryId ? { beneficiaryId } : {}),
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Failed to create pickup request');
+
+    setDonations((prev) => prev.filter((d) => d.id !== donation.id));
+    toast.success(`Pickup request sent for "${donation.name}"!`);
+  };
+
+  const handleRequestPickup = async (donation: Donation) => {
+    try {
+      if (donation.deliveryMode === 'direct') {
+        // open beneficiary dialog
+        setDirectDonation(donation);
+        setDirectDialogOpen(true);
+        setBeneficiaryId('');
+        await fetchBeneficiaries();
+        return;
+      }
+
+      await requestPickup(donation);
+    } catch (e: any) {
+      toast.error(e?.message || 'Something went wrong');
+    }
+  };
+
+  const handleConfirmDirect = async () => {
+    if (!directDonation) return;
+    if (!beneficiaryId) {
+      toast.error('Please select a beneficiary for direct delivery');
+      return;
+    }
+    try {
+      await requestPickup(directDonation, beneficiaryId);
+      setDirectDialogOpen(false);
+      setDirectDonation(null);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to request pickup');
+    }
+  };
+
   return (
     <div className="relative min-h-screen bg-gradient-to-br from-emerald-50/50 via-white to-amber-50/30">
       <FoodPatternBackground />
 
       <div className="relative z-10 mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        {/* Back button */}
         <button
           onClick={() => setCurrentPage('home')}
           className="mb-6 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -262,7 +339,6 @@ export default function AvailableFoodPage() {
           <span>← Back to Home</span>
         </button>
 
-        {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -284,7 +360,6 @@ export default function AvailableFoodPage() {
           transition={{ duration: 0.4, delay: 0.1 }}
           className="mb-8 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center"
         >
-          {/* Search */}
           <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -295,7 +370,6 @@ export default function AvailableFoodPage() {
             />
           </div>
 
-          {/* Category Filter */}
           <Select value={categoryFilter} onValueChange={setCategoryFilter}>
             <SelectTrigger className="w-full sm:w-[180px]">
               <Filter className="h-4 w-4 mr-1" />
@@ -311,7 +385,6 @@ export default function AvailableFoodPage() {
             </SelectContent>
           </Select>
 
-          {/* Status Filter */}
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="w-full sm:w-[160px]">
               <SelectValue placeholder="Status" />
@@ -324,7 +397,6 @@ export default function AvailableFoodPage() {
             </SelectContent>
           </Select>
 
-          {/* Sort */}
           <Select value={sortBy} onValueChange={setSortBy}>
             <SelectTrigger className="w-full sm:w-[180px]">
               <ArrowUpDown className="h-4 w-4 mr-1" />
@@ -357,7 +429,6 @@ export default function AvailableFoodPage() {
           </div>
         ) : (
           <>
-            {/* Results count */}
             <div className="mb-6">
               <p className="text-sm text-muted-foreground">
                 Showing{' '}
@@ -368,7 +439,6 @@ export default function AvailableFoodPage() {
               </p>
             </div>
 
-            {/* Food Cards Grid */}
             {filteredDonations.length > 0 ? (
               <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
                 {filteredDonations.map((donation, index) => (
@@ -379,36 +449,33 @@ export default function AvailableFoodPage() {
                     transition={{ duration: 0.4, delay: index * 0.08 }}
                   >
                     <Card className="overflow-hidden hover:shadow-md transition-shadow duration-300 h-full">
-                      {/* Food Image Placeholder */}
                       <div
                         className={`relative flex h-44 items-center justify-center bg-gradient-to-br ${
-                          categoryGradients[donation.category] ||
-                          'from-gray-100 to-gray-50'
+                          categoryGradients[donation.category] || 'from-gray-100 to-gray-50'
                         }`}
                       >
                         {categoryIcons[donation.category] || (
                           <PackageOpen className="h-10 w-10 opacity-50" />
                         )}
-                        {/* Status badge overlay */}
+
                         <div className="absolute top-3 right-3">
                           <Badge
                             variant="outline"
-                            className={
-                              statusConfig[donation.status]?.className ||
-                              'bg-gray-100 text-gray-700 border-gray-200'
-                            }
+                            className={statusConfig[donation.status]?.className || 'bg-gray-100 text-gray-700 border-gray-200'}
                           >
                             {statusConfig[donation.status]?.label || donation.status}
                           </Badge>
                         </div>
-                        {/* Category badge */}
-                        <div className="absolute top-3 left-3">
-                          <Badge
-                            variant="secondary"
-                            className="bg-white/90 text-gray-700 backdrop-blur-sm"
-                          >
+
+                        <div className="absolute top-3 left-3 flex gap-2">
+                          <Badge variant="secondary" className="bg-white/90 text-gray-700 backdrop-blur-sm">
                             {donation.category}
                           </Badge>
+                          {donation.deliveryMode === 'direct' && (
+                            <Badge className="bg-emerald-600 text-white border-none">
+                              Direct
+                            </Badge>
+                          )}
                         </div>
                       </div>
 
@@ -423,39 +490,24 @@ export default function AvailableFoodPage() {
                         <div className="space-y-2 mb-4">
                           <div className="flex items-center justify-between text-sm">
                             <span className="text-muted-foreground">Quantity</span>
-                            <span className="font-medium text-gray-700">
-                              {donation.quantity}
-                            </span>
+                            <span className="font-medium text-gray-700">{donation.quantity}</span>
                           </div>
-                          <div
-                            className={`flex items-center justify-between text-sm ${
-                              isExpiringSoon(donation.expiry)
-                                ? 'text-red-600'
-                                : ''
-                            }`}
-                          >
+
+                          <div className={`flex items-center justify-between text-sm ${isExpiringSoon(donation.expiry) ? 'text-red-600' : ''}`}>
                             <span className="flex items-center gap-1 text-muted-foreground">
                               <Clock className="h-3.5 w-3.5" />
-                              {isExpiringSoon(donation.expiry)
-                                ? 'Expires soon!'
-                                : 'Expires in'}
+                              {isExpiringSoon(donation.expiry) ? 'Expires soon!' : 'Expires in'}
                             </span>
-                            <span
-                              className={`font-medium ${
-                                isExpiringSoon(donation.expiry)
-                                  ? 'text-red-600'
-                                  : 'text-gray-700'
-                              }`}
-                            >
+                            <span className={`font-medium ${isExpiringSoon(donation.expiry) ? 'text-red-600' : 'text-gray-700'}`}>
                               {donation.expiry}
                             </span>
                           </div>
+
                           <div className="flex items-center justify-between text-sm">
                             <span className="text-muted-foreground">Donor</span>
-                            <span className="font-medium text-gray-700">
-                              {donation.donor}
-                            </span>
+                            <span className="font-medium text-gray-700">{donation.donor}</span>
                           </div>
+
                           <div className="flex items-center justify-between text-sm">
                             <span className="flex items-center gap-1 text-muted-foreground">
                               <MapPin className="h-3.5 w-3.5" />
@@ -475,22 +527,10 @@ export default function AvailableFoodPage() {
                             {isUserNgo ? 'Request Pickup' : 'Login as NGO to Request'}
                           </Button>
                         )}
-                        {donation.status === 'claimed' && (
-                          <Button
-                            variant="outline"
-                            className="w-full text-amber-600 border-amber-200"
-                            disabled
-                          >
-                            Claimed
-                          </Button>
-                        )}
-                        {donation.status === 'delivered' && (
-                          <Button
-                            variant="outline"
-                            className="w-full text-blue-600 border-blue-200"
-                            disabled
-                          >
-                            Delivered
+
+                        {donation.status !== 'available' && (
+                          <Button variant="outline" className="w-full" disabled>
+                            {statusConfig[donation.status]?.label || donation.status}
                           </Button>
                         )}
                       </CardContent>
@@ -499,7 +539,6 @@ export default function AvailableFoodPage() {
                 ))}
               </div>
             ) : (
-              /* Empty State */
               <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -512,8 +551,7 @@ export default function AvailableFoodPage() {
                   No donations found
                 </h3>
                 <p className="text-center text-muted-foreground max-w-md mb-6">
-                  No food donations match your current filters. Try adjusting your
-                  search or category filters to see more results.
+                  No food donations match your current filters. Try adjusting your filters.
                 </p>
                 <Button
                   variant="outline"
@@ -531,6 +569,82 @@ export default function AvailableFoodPage() {
           </>
         )}
       </div>
+
+      {/* Direct Delivery Dialog */}
+      <Dialog open={directDialogOpen} onOpenChange={setDirectDialogOpen}>
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>Select Beneficiary for Direct Delivery</DialogTitle>
+            <DialogDescription>
+              This donation is marked for direct delivery. Choose a verified recipient or create one.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Beneficiary</Label>
+              <select
+                className="w-full border rounded-md px-3 py-2 text-sm"
+                value={beneficiaryId}
+                onChange={(e) => setBeneficiaryId(e.target.value)}
+                disabled={loadingBeneficiaries}
+              >
+                <option value="">
+                  {loadingBeneficiaries ? 'Loading...' : 'Select a beneficiary'}
+                </option>
+                {beneficiaries.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.fullName} — {b.address}
+                  </option>
+                ))}
+              </select>
+              {beneficiaries.length === 0 && !loadingBeneficiaries && (
+                <p className="text-xs text-muted-foreground">
+                  No beneficiaries found. Create one below.
+                </p>
+              )}
+            </div>
+
+            <div className="rounded-lg border p-3 space-y-3">
+              <div className="text-sm font-semibold">Create New Beneficiary</div>
+              <div className="grid gap-2">
+                <Label className="text-xs">Full Name</Label>
+                <Input value={newBName} onChange={(e) => setNewBName(e.target.value)} placeholder="Recipient name" />
+              </div>
+              <div className="grid gap-2">
+                <Label className="text-xs">Phone (optional)</Label>
+                <Input value={newBPhone} onChange={(e) => setNewBPhone(e.target.value)} placeholder="+91..." />
+              </div>
+              <div className="grid gap-2">
+                <Label className="text-xs">Address</Label>
+                <Input value={newBAddress} onChange={(e) => setNewBAddress(e.target.value)} placeholder="Full address" />
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={createBeneficiary}
+                disabled={creatingB || !authToken}
+              >
+                {creatingB ? 'Creating...' : 'Create Beneficiary'}
+              </Button>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDirectDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              onClick={handleConfirmDirect}
+              disabled={!beneficiaryId}
+            >
+              Confirm & Request Pickup
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

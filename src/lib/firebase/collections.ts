@@ -4,4 +4,6 @@ export const COLLECTIONS = {
   products: 'products',
   requests: 'requests',
   contacts: 'contacts',
+  beneficiaries: 'beneficiaries', // NEW
+  auditLogs: 'auditLogs',         // NEW (if you use logs)
 } as const;

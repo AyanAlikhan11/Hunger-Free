@@ -12,6 +12,7 @@ export type UserProfile = {
   lng?: number | null;
   createdAt?: string;
   updatedAt?: string;
+  isActive;
 };
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {

@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/card';
 import { FoodPatternBackground } from '@/components/shared/food-pattern';
 import { useAppStore } from '@/lib/store';
+import MapPicker from '@/components/maps/map-picker';
 
 const categories = [
   'Cooked Food',
@@ -52,6 +53,8 @@ export default function DonateFoodPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const [pickupPoint, setPickupPoint] = useState<{ lat: number; lng: number } | null>(null);
+const [deliveryMode, setDeliveryMode] = useState<'ngo' | 'direct'>('ngo');
 
   useEffect(() => {
     if (_hasHydrated) setHydrated(true);
@@ -107,6 +110,10 @@ export default function DonateFoodPage() {
     toast.error('You must be logged in to donate food.');
     return;
   }
+  if (!pickupPoint) {
+  toast.error('Please pick a pickup location on the map.');
+  return;
+}
 
   setIsSubmitting(true);
 
@@ -125,6 +132,7 @@ export default function DonateFoodPage() {
       lat: 19.076,
       lng: 72.8777,
       // imageUrl: (later from Firebase Storage)
+      deliveryMode, // NEW
     };
 
     const response = await fetch('/api/donations', {
@@ -295,6 +303,39 @@ export default function DonateFoodPage() {
                     </Select>
                   </div>
 
+                  <div className="space-y-3">
+  <Label className="text-sm font-medium">
+    Delivery Preference <span className="text-red-500">*</span>
+  </Label>
+  <div className="grid grid-cols-2 gap-2">
+    <button
+      type="button"
+      onClick={() => setDeliveryMode('ngo')}
+      className={`rounded-xl border-2 p-3 text-left transition-all ${
+        deliveryMode === 'ngo'
+          ? 'border-emerald-500 bg-emerald-50'
+          : 'border-gray-200 bg-white hover:bg-gray-50'
+      }`}
+    >
+      <div className="font-semibold text-sm text-gray-900">Deliver to NGO</div>
+      <div className="text-xs text-gray-500">NGO receives & distributes</div>
+    </button>
+
+    <button
+      type="button"
+      onClick={() => setDeliveryMode('direct')}
+      className={`rounded-xl border-2 p-3 text-left transition-all ${
+        deliveryMode === 'direct'
+          ? 'border-emerald-500 bg-emerald-50'
+          : 'border-gray-200 bg-white hover:bg-gray-50'
+      }`}
+    >
+      <div className="font-semibold text-sm text-gray-900">Direct Delivery</div>
+      <div className="text-xs text-gray-500">Deliver to a verified needy recipient</div>
+    </button>
+  </div>
+</div>
+
                   {/* Quantity and Unit */}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -372,6 +413,8 @@ export default function DonateFoodPage() {
                       </div>
                     </div>
                   </div>
+                  {/* new map integration */}
+                  <MapPicker value={pickupPoint} onChange={setPickupPoint} height={240} />
 
                   {/* Image Upload */}
                   <div className="space-y-2">

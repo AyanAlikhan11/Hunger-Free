@@ -1850,6 +1850,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { useAppStore } from '@/lib/store';
+import AdminManagement from '@/components/admin/admin-management';
 
 // ─── Animation Variants ───────────────────────────────────────────────────────
 
@@ -2315,6 +2316,12 @@ export function NGODashboard() {
         }),
       });
 
+      if (donation.deliveryMode === 'direct') {
+  toast.info('This donation requires beneficiary selection. Use Available Food page.');
+  // if you have setCurrentPage available:
+  // setCurrentPage('available-food');
+  return;
+}
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Failed to request pickup');
 
@@ -3694,6 +3701,9 @@ export function AdminDashboard() {
                 })}
               </div>
             )}
+            <motion.div {...fadeInUp} transition={{ delay: 0.7 }}>
+  <AdminManagement />
+</motion.div>
           </CardContent>
         </Card>
       </motion.div>

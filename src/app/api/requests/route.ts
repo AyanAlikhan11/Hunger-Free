@@ -117,7 +117,7 @@ function isFirestoreIndexError(err: any) {
   const msg = String(err?.message || '');
   return (
     msg.includes('FAILED_PRECONDITION') &&
-    (msg.toLowerCase().includes('requires an index') || msg.toLowerCase().includes('create it here'))
+    (msg.toLowerCase().includes('index') || msg.toLowerCase().includes('create it here'))
   );
 }
 
@@ -142,7 +142,6 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status');
 
     let q: FirebaseFirestore.Query = db.collection(COLLECTIONS.requests);
-
     if (ngoId) q = q.where('ngoId', '==', ngoId);
     if (volunteerId) q = q.where('volunteerId', '==', volunteerId);
     if (status) q = q.where('status', '==', status);
@@ -150,13 +149,9 @@ export async function GET(request: NextRequest) {
     let requestsRaw: any[] = [];
 
     try {
-      // Preferred: DB ordering (fast) — may require composite index
       const snap = await q.orderBy('createdAt', 'desc').get();
       requestsRaw = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     } catch (err) {
-      console.error('[Requests GET] Firestore query failed:', err);
-
-      // Fallback: run without orderBy if it’s an index error, then sort in memory
       if (isFirestoreIndexError(err)) {
         const snap = await q.get();
         requestsRaw = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -170,9 +165,7 @@ export async function GET(request: NextRequest) {
     const donationIds = Array.from(new Set(requestsRaw.map((r) => r.donationId).filter(Boolean)));
     const donationRefs = donationIds.map((id) => db.collection(COLLECTIONS.donations).doc(id));
     const donationSnaps = donationRefs.length ? await db.getAll(...donationRefs) : [];
-    const donationMap = new Map(
-      donationSnaps.map((s) => [s.id, s.exists ? { id: s.id, ...s.data() } : null])
-    );
+    const donationMap = new Map(donationSnaps.map((s) => [s.id, s.exists ? { id: s.id, ...s.data() } : null]));
 
     const requests = requestsRaw.map((r) => ({
       ...r,
@@ -181,7 +174,6 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ requests });
   } catch (error: any) {
-    console.error('[Requests GET] error:', error);
     const code = error?.message === 'UNAUTHORIZED' ? 401 : 500;
     return NextResponse.json(
       { error: code === 401 ? 'Unauthorized' : 'Failed to fetch requests' },
@@ -200,17 +192,14 @@ export async function POST(request: NextRequest) {
     const profile = await getUserProfile(uid);
     if (!profile) return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
 
-    // Only NGO (or admin) should create pickup requests
     if (profile.role !== 'ngo' && profile.role !== 'admin') {
       return NextResponse.json({ error: 'Only NGOs can request pickups' }, { status: 403 });
     }
 
     const body = await request.json();
-    const { donationId } = body;
+    const { donationId, beneficiaryId } = body;
 
-    if (!donationId) {
-      return NextResponse.json({ error: 'donationId is required' }, { status: 400 });
-    }
+    if (!donationId) return NextResponse.json({ error: 'donationId is required' }, { status: 400 });
 
     const donationRef = db.collection(COLLECTIONS.donations).doc(donationId);
     const requestRef = db.collection(COLLECTIONS.requests).doc();
@@ -223,12 +212,52 @@ export async function POST(request: NextRequest) {
       const donation = donationSnap.data() as any;
       if (donation.status !== 'available') throw new Error('DONATION_NOT_AVAILABLE');
 
+      const deliveryMode = donation.deliveryMode === 'direct' ? 'direct' : 'ngo';
+
+      // pickup snapshot from donation
+      const pickupAddress = donation.address || '';
+      const pickupLat = donation.lat ?? null;
+      const pickupLng = donation.lng ?? null;
+
+      // dropoff decision
+      let dropoffType: 'ngo' | 'recipient' = 'ngo';
+      let dropoffAddress = profile.address || 'NGO Address';
+      let dropoffLat = profile.lat ?? null;
+      let dropoffLng = profile.lng ?? null;
+      let dropoffRecipientId: string | null = null;
+
+      if (deliveryMode === 'direct') {
+        if (!beneficiaryId) throw new Error('BENEFICIARY_REQUIRED');
+        const bRef = db.collection(COLLECTIONS.beneficiaries).doc(String(beneficiaryId));
+        const bSnap = await tx.get(bRef);
+        if (!bSnap.exists) throw new Error('BENEFICIARY_NOT_FOUND');
+        const b = bSnap.data() as any;
+
+        dropoffType = 'recipient';
+        dropoffRecipientId = String(beneficiaryId);
+        dropoffAddress = b.address;
+        dropoffLat = b.lat ?? null;
+        dropoffLng = b.lng ?? null;
+      }
+
       tx.set(requestRef, {
         donationId,
         ngoId: uid,
         ngoName: profile.name,
+
         volunteerId: null,
         volunteerName: null,
+
+        pickupAddress,
+        pickupLat,
+        pickupLng,
+
+        dropoffType,
+        dropoffAddress,
+        dropoffLat,
+        dropoffLng,
+        dropoffRecipientId,
+
         status: 'pending',
         createdAt: now,
         updatedAt: now,
@@ -237,6 +266,7 @@ export async function POST(request: NextRequest) {
       tx.update(donationRef, {
         status: 'claimed',
         claimedBy: uid,
+        requestId: requestRef.id,
         updatedAt: now,
       });
     });
@@ -255,25 +285,21 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     );
   } catch (error: any) {
-    console.error('[Requests POST] error:', error);
-
     const msg =
-      error?.message === 'UNAUTHORIZED'
-        ? 'Unauthorized'
-        : error?.message === 'DONATION_NOT_FOUND'
-          ? 'Donation not found'
-          : error?.message === 'DONATION_NOT_AVAILABLE'
-            ? 'Donation is not available'
-            : 'Failed to create request';
+      error?.message === 'UNAUTHORIZED' ? 'Unauthorized'
+      : error?.message === 'DONATION_NOT_FOUND' ? 'Donation not found'
+      : error?.message === 'DONATION_NOT_AVAILABLE' ? 'Donation is not available'
+      : error?.message === 'BENEFICIARY_REQUIRED' ? 'Beneficiary is required for direct delivery'
+      : error?.message === 'BENEFICIARY_NOT_FOUND' ? 'Beneficiary not found'
+      : 'Failed to create request';
 
     const code =
-      error?.message === 'UNAUTHORIZED'
-        ? 401
-        : error?.message === 'DONATION_NOT_FOUND'
-          ? 404
-          : error?.message === 'DONATION_NOT_AVAILABLE'
-            ? 409
-            : 500;
+      error?.message === 'UNAUTHORIZED' ? 401
+      : error?.message === 'DONATION_NOT_FOUND' ? 404
+      : error?.message === 'BENEFICIARY_NOT_FOUND' ? 404
+      : error?.message === 'DONATION_NOT_AVAILABLE' ? 409
+      : error?.message === 'BENEFICIARY_REQUIRED' ? 400
+      : 500;
 
     return NextResponse.json({ error: msg }, { status: code });
   }
@@ -292,9 +318,7 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json();
     const { id, ...updates } = body;
 
-    if (!id) {
-      return NextResponse.json({ error: 'Request id is required' }, { status: 400 });
-    }
+    if (!id) return NextResponse.json({ error: 'Request id is required' }, { status: 400 });
 
     const reqRef = db.collection(COLLECTIONS.requests).doc(id);
     const now = new Date().toISOString();
@@ -309,18 +333,18 @@ export async function PATCH(request: NextRequest) {
       const isNgoOwner = reqData.ngoId === uid;
       const isAssignedVolunteer = reqData.volunteerId && reqData.volunteerId === uid;
 
-      // Allow volunteers to ACCEPT a pending request even if not assigned yet
-      const isVolunteerAcceptingPending =
+      // volunteer can accept pending even if not assigned yet
+      const volunteerAccepting =
         profile.role === 'volunteer' &&
         updates.status === 'accepted' &&
         (!reqData.volunteerId || reqData.volunteerId === uid);
 
-      if (!isAdmin && !isNgoOwner && !isAssignedVolunteer && !isVolunteerAcceptingPending) {
+      if (!isAdmin && !isNgoOwner && !isAssignedVolunteer && !volunteerAccepting) {
         throw new Error('FORBIDDEN');
       }
 
-      // Secure volunteer assignment: if volunteer is accepting, force volunteerId/name from token
-      if (isVolunteerAcceptingPending) {
+      // Secure volunteer identity (prevent spoof)
+      if (volunteerAccepting) {
         updates.volunteerId = uid;
         updates.volunteerName = profile.name;
       }
@@ -351,6 +375,7 @@ export async function PATCH(request: NextRequest) {
     const updatedSnap = await reqRef.get();
     const updatedReq = { id: updatedSnap.id, ...updatedSnap.data() } as any;
 
+    // include donation
     let donation: any = null;
     if (updatedReq.donationId) {
       const dSnap = await db.collection(COLLECTIONS.donations).doc(updatedReq.donationId).get();
@@ -359,25 +384,16 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ request: { ...updatedReq, donation } });
   } catch (error: any) {
-    console.error('[Requests PATCH] error:', error);
-
     const code =
-      error?.message === 'UNAUTHORIZED'
-        ? 401
-        : error?.message === 'FORBIDDEN'
-          ? 403
-          : error?.message === 'REQUEST_NOT_FOUND'
-            ? 404
-            : 500;
+      error?.message === 'UNAUTHORIZED' ? 401 :
+      error?.message === 'FORBIDDEN' ? 403 :
+      error?.message === 'REQUEST_NOT_FOUND' ? 404 : 500;
 
     const msg =
-      code === 401
-        ? 'Unauthorized'
-        : code === 403
-          ? 'Forbidden'
-          : code === 404
-            ? 'Request not found'
-            : 'Failed to update request';
+      code === 401 ? 'Unauthorized' :
+      code === 403 ? 'Forbidden' :
+      code === 404 ? 'Request not found' :
+      'Failed to update request';
 
     return NextResponse.json({ error: msg }, { status: code });
   }

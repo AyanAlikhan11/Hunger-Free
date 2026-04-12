@@ -109,7 +109,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '@/lib/firebase/server';
 import { COLLECTIONS } from '@/lib/firebase/collections';
-import { requireUid } from '@/lib/firebase/auth-server';
+import { requireUid, getUidFromRequest } from '@/lib/firebase/auth-server';
 import { getUserProfile } from '@/lib/firebase/user-server';
 
 export const runtime = 'nodejs';
@@ -117,7 +117,6 @@ export const dynamic = 'force-dynamic';
 
 function isFirestoreIndexError(err: any) {
   const msg = String(err?.message || '');
-  // Firestore index errors usually include FAILED_PRECONDITION + "index" + "create it here"
   return (
     msg.includes('FAILED_PRECONDITION') &&
     (msg.toLowerCase().includes('index') || msg.toLowerCase().includes('create it here'))
@@ -132,12 +131,28 @@ function sortByCreatedAtDesc(items: any[]) {
   });
 }
 
+function maskAddress(address?: string) {
+  if (!address) return '';
+  // show only last part (city/state) to keep it public-safe
+  const parts = address.split(',').map((p) => p.trim()).filter(Boolean);
+  if (parts.length <= 1) return 'Nearby';
+  return parts.slice(-2).join(', ');
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { db } = getFirebaseAdmin();
-    if (!db) {
-      return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
-    }
+    if (!db) return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
+
+    // Optional auth (public can still read)
+    const uid = await getUidFromRequest(request);
+    const profile = uid ? await getUserProfile(uid) : null;
+
+    const canSeeExact =
+      profile?.role === 'admin' ||
+      profile?.role === 'ngo' ||
+      profile?.role === 'volunteer' ||
+      profile?.role === 'donor';
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
@@ -151,15 +166,10 @@ export async function GET(request: NextRequest) {
     if (donorId) q = q.where('donorId', '==', donorId);
 
     let donations: any[] = [];
-
     try {
-      // Preferred query (fast + correct ordering). Might require composite index.
       const snap = await q.orderBy('createdAt', 'desc').get();
       donations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     } catch (err) {
-      console.error('[Donations GET] Firestore query failed:', err);
-
-      // Fallback: retry without orderBy if this is index-related
       if (isFirestoreIndexError(err)) {
         const snap = await q.get();
         donations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -169,7 +179,18 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ donations });
+    // Mask address for public viewers
+    const safe = donations.map((d) => {
+      if (canSeeExact) return d;
+      return {
+        ...d,
+        address: maskAddress(d.address),
+        // you may also optionally hide donor name publicly:
+        // donorName: 'Donor',
+      };
+    });
+
+    return NextResponse.json({ donations: safe });
   } catch (error) {
     console.error('Donations GET error:', error);
     return NextResponse.json({ error: 'Failed to fetch donations' }, { status: 500 });
@@ -181,14 +202,10 @@ export async function POST(request: NextRequest) {
     const uid = await requireUid(request);
 
     const { db } = getFirebaseAdmin();
-    if (!db) {
-      return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
-    }
+    if (!db) return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
 
     const profile = await getUserProfile(uid);
-    if (!profile) {
-      return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
-    }
+    if (!profile) return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
 
     const body = await request.json();
     const {
@@ -202,20 +219,22 @@ export async function POST(request: NextRequest) {
       address,
       lat,
       lng,
+      deliveryMode,
     } = body;
 
-    if (!foodName) {
-      return NextResponse.json({ error: 'foodName is required' }, { status: 400 });
-    }
+    if (!foodName) return NextResponse.json({ error: 'foodName is required' }, { status: 400 });
 
     const now = new Date().toISOString();
     const expiryIso = expiryTime
       ? new Date(expiryTime).toISOString()
       : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
+    const mode = deliveryMode === 'direct' ? 'direct' : 'ngo';
+
     const docRef = await db.collection(COLLECTIONS.donations).add({
       donorId: uid,
       donorName: profile.name,
+
       foodName,
       description: description || '',
       quantity: String(quantity || '0'),
@@ -223,27 +242,26 @@ export async function POST(request: NextRequest) {
       expiryTime: expiryIso,
       category: category || 'Other',
       imageUrl: imageUrl || null,
+
       address: address || '',
       lat: lat !== undefined && lat !== null ? Number(lat) : null,
       lng: lng !== undefined && lng !== null ? Number(lng) : null,
+
+      deliveryMode: mode, // NEW
+
       status: 'available',
       claimedBy: null,
       volunteerId: null,
+
       createdAt: now,
       updatedAt: now,
     });
 
     const donationSnap = await docRef.get();
-    return NextResponse.json(
-      { donation: { id: donationSnap.id, ...donationSnap.data() } },
-      { status: 201 }
-    );
+    return NextResponse.json({ donation: { id: donationSnap.id, ...donationSnap.data() } }, { status: 201 });
   } catch (error: any) {
     const code = error?.message === 'UNAUTHORIZED' ? 401 : 500;
-    return NextResponse.json(
-      { error: code === 401 ? 'Unauthorized' : 'Failed to create donation' },
-      { status: code }
-    );
+    return NextResponse.json({ error: code === 401 ? 'Unauthorized' : 'Failed to create donation' }, { status: code });
   }
 }
 
@@ -252,21 +270,15 @@ export async function PATCH(request: NextRequest) {
     const uid = await requireUid(request);
 
     const { db } = getFirebaseAdmin();
-    if (!db) {
-      return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
-    }
+    if (!db) return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
 
     const profile = await getUserProfile(uid);
-    if (!profile) {
-      return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
-    }
+    if (!profile) return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
 
     const body = await request.json();
     const { id, ...updates } = body;
 
-    if (!id) {
-      return NextResponse.json({ error: 'Donation ID is required' }, { status: 400 });
-    }
+    if (!id) return NextResponse.json({ error: 'Donation ID is required' }, { status: 400 });
 
     const ref = db.collection(COLLECTIONS.donations).doc(id);
     const snap = await ref.get();
@@ -277,23 +289,16 @@ export async function PATCH(request: NextRequest) {
     const isAdmin = profile.role === 'admin';
     if (!isOwner && !isAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-    // prevent changing ownership fields
     delete (updates as any).donorId;
     delete (updates as any).donorName;
 
-    await ref.update({
-      ...updates,
-      updatedAt: new Date().toISOString(),
-    });
+    await ref.update({ ...updates, updatedAt: new Date().toISOString() });
 
     const updated = (await ref.get()).data();
     return NextResponse.json({ donation: { id, ...updated } });
   } catch (error: any) {
     const code = error?.message === 'UNAUTHORIZED' ? 401 : 500;
-    return NextResponse.json(
-      { error: code === 401 ? 'Unauthorized' : 'Failed to update donation' },
-      { status: code }
-    );
+    return NextResponse.json({ error: code === 401 ? 'Unauthorized' : 'Failed to update donation' }, { status: code });
   }
 }
 
@@ -302,21 +307,15 @@ export async function DELETE(request: NextRequest) {
     const uid = await requireUid(request);
 
     const { db } = getFirebaseAdmin();
-    if (!db) {
-      return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
-    }
+    if (!db) return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
 
     const profile = await getUserProfile(uid);
-    if (!profile) {
-      return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
-    }
+    if (!profile) return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
 
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
 
-    if (!id) {
-      return NextResponse.json({ error: 'Donation ID is required' }, { status: 400 });
-    }
+    if (!id) return NextResponse.json({ error: 'Donation ID is required' }, { status: 400 });
 
     const ref = db.collection(COLLECTIONS.donations).doc(id);
     const snap = await ref.get();
@@ -331,9 +330,6 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error: any) {
     const code = error?.message === 'UNAUTHORIZED' ? 401 : 500;
-    return NextResponse.json(
-      { error: code === 401 ? 'Unauthorized' : 'Failed to delete donation' },
-      { status: code }
-    );
+    return NextResponse.json({ error: code === 401 ? 'Unauthorized' : 'Failed to delete donation' }, { status: code });
   }
 }
