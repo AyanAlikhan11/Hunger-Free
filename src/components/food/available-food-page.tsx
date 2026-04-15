@@ -339,7 +339,7 @@ export default function AvailableFoodPage() {
     if (target.deliveryMode === 'direct') {
       openDirectDialog(target).catch(() => {});
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+///  eslint-disable-next-line react-hooks/exhaustive-deps
   }, [donations, isAuthenticated, user?.role, authToken]);
 
   const handleRequestPickup = async (donation: Donation) => {
