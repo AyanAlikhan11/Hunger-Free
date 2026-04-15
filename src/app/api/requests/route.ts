@@ -129,6 +129,20 @@ function sortByCreatedAtDesc<T extends { createdAt?: any }>(items: T[]) {
   });
 }
 
+function normalizeAddress(input: unknown) {
+  return String(input ?? '')
+    .replace(/\r?\n/g, ', ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function toNumberOrNull(v: unknown) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+
 export async function GET(request: NextRequest) {
   try {
     await requireUid(request);
@@ -192,14 +206,22 @@ export async function POST(request: NextRequest) {
     const profile = await getUserProfile(uid);
     if (!profile) return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
 
+    // ✅ block disabled accounts
+    if ((profile as any).isActive === false) {
+      return NextResponse.json({ error: 'Account disabled. Contact support.' }, { status: 403 });
+    }
+
     if (profile.role !== 'ngo' && profile.role !== 'admin') {
       return NextResponse.json({ error: 'Only NGOs can request pickups' }, { status: 403 });
     }
 
     const body = await request.json();
-    const { donationId, beneficiaryId } = body;
+    const donationId = String(body?.donationId || '');
+    const beneficiaryId = body?.beneficiaryId ? String(body.beneficiaryId) : null;
 
-    if (!donationId) return NextResponse.json({ error: 'donationId is required' }, { status: 400 });
+    if (!donationId) {
+      return NextResponse.json({ error: 'donationId is required' }, { status: 400 });
+    }
 
     const donationRef = db.collection(COLLECTIONS.donations).doc(donationId);
     const requestRef = db.collection(COLLECTIONS.requests).doc();
@@ -214,55 +236,107 @@ export async function POST(request: NextRequest) {
 
       const deliveryMode = donation.deliveryMode === 'direct' ? 'direct' : 'ngo';
 
-      // pickup snapshot from donation
-      const pickupAddress = donation.address || '';
-      const pickupLat = donation.lat ?? null;
-      const pickupLng = donation.lng ?? null;
+      // ✅ pickup snapshot from donation (normalize address)
+      const pickupAddress = normalizeAddress(donation.address);
+      if (!pickupAddress) throw new Error('PICKUP_ADDRESS_MISSING');
 
-      // dropoff decision
+      // coords are optional (but recommended). keep as null if missing
+      const pickupLat = toNumberOrNull(donation.lat);
+      const pickupLng = toNumberOrNull(donation.lng);
+
+      // ✅ donation snapshot (speed: reduces joins)
+      const donationSnapshot = {
+        foodName: donation.foodName || 'Food',
+        donorName: donation.donorName || 'Donor',
+        quantity: String(donation.quantity || '0'),
+        unit: donation.unit || '',
+        category: donation.category || 'Other',
+      };
+
+      // ✅ dropoff decision
       let dropoffType: 'ngo' | 'recipient' = 'ngo';
-      let dropoffAddress = profile.address || 'NGO Address';
-      let dropoffLat = profile.lat ?? null;
-      let dropoffLng = profile.lng ?? null;
       let dropoffRecipientId: string | null = null;
+
+      let dropoffAddress = normalizeAddress(profile.address) || 'NGO Address';
+      const dropoffLat = toNumberOrNull((profile as any).lat);
+      const dropoffLng = toNumberOrNull((profile as any).lng);
 
       if (deliveryMode === 'direct') {
         if (!beneficiaryId) throw new Error('BENEFICIARY_REQUIRED');
-        const bRef = db.collection(COLLECTIONS.beneficiaries).doc(String(beneficiaryId));
+
+        const bRef = db.collection(COLLECTIONS.beneficiaries).doc(beneficiaryId);
         const bSnap = await tx.get(bRef);
         if (!bSnap.exists) throw new Error('BENEFICIARY_NOT_FOUND');
+
         const b = bSnap.data() as any;
 
+        // ✅ NGO can only use its own verified beneficiaries (admin can use any)
+        if (profile.role !== 'admin' && b.verifiedByNgoId !== uid) {
+          throw new Error('BENEFICIARY_FORBIDDEN');
+        }
+
         dropoffType = 'recipient';
-        dropoffRecipientId = String(beneficiaryId);
-        dropoffAddress = b.address;
-        dropoffLat = b.lat ?? null;
-        dropoffLng = b.lng ?? null;
+        dropoffRecipientId = beneficiaryId;
+
+        dropoffAddress = normalizeAddress(b.address) || 'Recipient Address';
+        // overwrite dropoff coords from beneficiary if present
+        const bLat = toNumberOrNull(b.lat);
+        const bLng = toNumberOrNull(b.lng);
+
+        // store these in request
+        tx.set(requestRef, {
+          donationId,
+          ngoId: uid,
+          ngoName: profile.name,
+
+          volunteerId: null,
+          volunteerName: null,
+
+          ...donationSnapshot,
+
+          pickupAddress,
+          pickupLat,
+          pickupLng,
+
+          dropoffType,
+          dropoffAddress,
+          dropoffLat: bLat,
+          dropoffLng: bLng,
+          dropoffRecipientId,
+
+          status: 'pending',
+          createdAt: now,
+          updatedAt: now,
+        });
+      } else {
+        // NGO delivery
+        tx.set(requestRef, {
+          donationId,
+          ngoId: uid,
+          ngoName: profile.name,
+
+          volunteerId: null,
+          volunteerName: null,
+
+          ...donationSnapshot,
+
+          pickupAddress,
+          pickupLat,
+          pickupLng,
+
+          dropoffType,
+          dropoffAddress,
+          dropoffLat,
+          dropoffLng,
+          dropoffRecipientId: null,
+
+          status: 'pending',
+          createdAt: now,
+          updatedAt: now,
+        });
       }
 
-      tx.set(requestRef, {
-        donationId,
-        ngoId: uid,
-        ngoName: profile.name,
-
-        volunteerId: null,
-        volunteerName: null,
-
-        pickupAddress,
-        pickupLat,
-        pickupLng,
-
-        dropoffType,
-        dropoffAddress,
-        dropoffLat,
-        dropoffLng,
-        dropoffRecipientId,
-
-        status: 'pending',
-        createdAt: now,
-        updatedAt: now,
-      });
-
+      // update donation
       tx.update(donationRef, {
         status: 'claimed',
         claimedBy: uid,
@@ -289,8 +363,10 @@ export async function POST(request: NextRequest) {
       error?.message === 'UNAUTHORIZED' ? 'Unauthorized'
       : error?.message === 'DONATION_NOT_FOUND' ? 'Donation not found'
       : error?.message === 'DONATION_NOT_AVAILABLE' ? 'Donation is not available'
+      : error?.message === 'PICKUP_ADDRESS_MISSING' ? 'Pickup address is missing for this donation'
       : error?.message === 'BENEFICIARY_REQUIRED' ? 'Beneficiary is required for direct delivery'
       : error?.message === 'BENEFICIARY_NOT_FOUND' ? 'Beneficiary not found'
+      : error?.message === 'BENEFICIARY_FORBIDDEN' ? 'You can only use beneficiaries verified by your NGO'
       : 'Failed to create request';
 
     const code =
@@ -299,6 +375,8 @@ export async function POST(request: NextRequest) {
       : error?.message === 'BENEFICIARY_NOT_FOUND' ? 404
       : error?.message === 'DONATION_NOT_AVAILABLE' ? 409
       : error?.message === 'BENEFICIARY_REQUIRED' ? 400
+      : error?.message === 'BENEFICIARY_FORBIDDEN' ? 403
+      : error?.message === 'PICKUP_ADDRESS_MISSING' ? 400
       : 500;
 
     return NextResponse.json({ error: msg }, { status: code });

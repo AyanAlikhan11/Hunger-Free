@@ -139,6 +139,19 @@ function maskAddress(address?: string) {
   return parts.slice(-2).join(', ');
 }
 
+function normalizeAddress(input: unknown) {
+  return String(input ?? '')
+    .replace(/\r?\n/g, ', ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function toNumberOrNull(v: unknown) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { db } = getFirebaseAdmin();
@@ -202,10 +215,19 @@ export async function POST(request: NextRequest) {
     const uid = await requireUid(request);
 
     const { db } = getFirebaseAdmin();
-    if (!db) return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
+    if (!db) {
+      return NextResponse.json({ error: 'Firebase Admin not configured' }, { status: 500 });
+    }
 
     const profile = await getUserProfile(uid);
-    if (!profile) return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
+    if (!profile) {
+      return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
+    }
+
+    // ✅ block disabled users
+    if ((profile as any).isActive === false) {
+      return NextResponse.json({ error: 'Account disabled. Contact support.' }, { status: 403 });
+    }
 
     const body = await request.json();
     const {
@@ -222,7 +244,26 @@ export async function POST(request: NextRequest) {
       deliveryMode,
     } = body;
 
-    if (!foodName) return NextResponse.json({ error: 'foodName is required' }, { status: 400 });
+    if (!foodName || String(foodName).trim().length === 0) {
+      return NextResponse.json({ error: 'foodName is required' }, { status: 400 });
+    }
+
+    // ✅ normalize + validate address (works for 1-line, 2-line, pasted multiline)
+    const cleanAddress = normalizeAddress(address);
+    if (!cleanAddress) {
+      return NextResponse.json({ error: 'Address is required' }, { status: 400 });
+    }
+
+    // ✅ require valid pickup coordinates (for routing & smooth NGO/volunteer flow)
+    const cleanLat = toNumberOrNull(lat);
+    const cleanLng = toNumberOrNull(lng);
+
+    if (cleanLat === null || cleanLng === null) {
+      return NextResponse.json(
+        { error: 'Pickup location (lat/lng) is required. Please pick location on the map.' },
+        { status: 400 }
+      );
+    }
 
     const now = new Date().toISOString();
     const expiryIso = expiryTime
@@ -235,36 +276,42 @@ export async function POST(request: NextRequest) {
       donorId: uid,
       donorName: profile.name,
 
-      foodName,
-      description: description || '',
+      foodName: String(foodName).trim(),
+      description: description ? String(description) : '',
       quantity: String(quantity || '0'),
       unit: unit || 'servings',
       expiryTime: expiryIso,
       category: category || 'Other',
       imageUrl: imageUrl || null,
 
-      address: address || '',
-      lat: lat !== undefined && lat !== null ? Number(lat) : null,
-      lng: lng !== undefined && lng !== null ? Number(lng) : null,
+      address: cleanAddress,
+      lat: cleanLat,
+      lng: cleanLng,
 
-      deliveryMode: mode, // NEW
+      deliveryMode: mode,
 
       status: 'available',
       claimedBy: null,
       volunteerId: null,
+      requestId: null, // ✅ helps link requests smoothly later
 
       createdAt: now,
       updatedAt: now,
     });
 
     const donationSnap = await docRef.get();
-    return NextResponse.json({ donation: { id: donationSnap.id, ...donationSnap.data() } }, { status: 201 });
+    return NextResponse.json(
+      { donation: { id: donationSnap.id, ...donationSnap.data() } },
+      { status: 201 }
+    );
   } catch (error: any) {
     const code = error?.message === 'UNAUTHORIZED' ? 401 : 500;
-    return NextResponse.json({ error: code === 401 ? 'Unauthorized' : 'Failed to create donation' }, { status: code });
+    return NextResponse.json(
+      { error: code === 401 ? 'Unauthorized' : 'Failed to create donation' },
+      { status: code }
+    );
   }
 }
-
 export async function PATCH(request: NextRequest) {
   try {
     const uid = await requireUid(request);

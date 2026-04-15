@@ -2251,7 +2251,7 @@ export function DonorDashboard() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function NGODashboard() {
-  const { user, authToken } = useAppStore();
+  const { user, authToken, setCurrentPage } = useAppStore();
   const [availableDonations, setAvailableDonations] = useState<any[]>([]);
   const [myRequests, setMyRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -2272,9 +2272,11 @@ export function NGODashboard() {
       const [donRes, reqRes] = await Promise.all([
         fetch('/api/donations?status=available', {
           headers: { Authorization: `Bearer ${authToken}` },
+          cache: 'no-store',
         }),
         fetch(`/api/requests?ngoId=${user.id}`, {
           headers: { Authorization: `Bearer ${authToken}` },
+          cache: 'no-store',
         }),
       ]);
 
@@ -2286,8 +2288,8 @@ export function NGODashboard() {
 
       setAvailableDonations(donData.donations || []);
       setMyRequests(reqData.requests || []);
-    } catch {
-      toast.error('Failed to load data');
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to load data');
     } finally {
       setLoading(false);
     }
@@ -2303,6 +2305,15 @@ export function NGODashboard() {
       return;
     }
 
+    // ✅ IMPORTANT: handle direct donations BEFORE calling /api/requests
+    if (donation?.deliveryMode === 'direct') {
+      // store donation id so available-food page can auto-open dialog
+      sessionStorage.setItem('hf_direct_request_donationId', String(donation.id));
+      toast.info('This donation requires beneficiary selection. Redirecting...');
+      setCurrentPage('available-food');
+      return;
+    }
+
     setRequestingId(donation.id);
     try {
       const res = await fetch('/api/requests', {
@@ -2311,24 +2322,16 @@ export function NGODashboard() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${authToken}`,
         },
-        body: JSON.stringify({
-          donationId: donation.id,
-        }),
+        body: JSON.stringify({ donationId: donation.id }),
       });
 
-      if (donation.deliveryMode === 'direct') {
-  toast.info('This donation requires beneficiary selection. Use Available Food page.');
-  // if you have setCurrentPage available:
-  // setCurrentPage('available-food');
-  return;
-}
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error || 'Failed to request pickup');
 
       toast.success(`Pickup requested for ${donation.foodName}`);
       fetchData();
-    } catch {
-      toast.error('Failed to request pickup');
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to request pickup');
     } finally {
       setRequestingId(null);
     }

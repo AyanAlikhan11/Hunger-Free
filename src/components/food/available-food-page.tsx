@@ -26,10 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Card,
-  CardContent,
-} from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { FoodPatternBackground } from '@/components/shared/food-pattern';
 import { useAppStore } from '@/lib/store';
@@ -141,39 +138,56 @@ export default function AvailableFoodPage() {
   const [newBAddress, setNewBAddress] = useState('');
   const [creatingB, setCreatingB] = useState(false);
 
+  // ─────────────────────────────────────────────────────────────
+  // Fetch donations
+  // ─────────────────────────────────────────────────────────────
   useEffect(() => {
+    const controller = new AbortController();
+
     async function fetchDonations() {
       try {
         setIsLoading(true);
-        const response = await fetch('/api/donations?status=available', { cache: 'no-store' });
-        if (response.ok) {
-          const data = await response.json();
-          const mapped: Donation[] = (data.donations || []).map(
-            (d: any) => ({
-              id: d.id,
-              name: d.foodName,
-              category: d.category,
-              quantity: `${d.quantity} ${d.unit}`,
-              description: d.description,
-              donor: d.donorName,
-              location: d.address || d.location?.address || 'Nearby',
-              expiry: calculateExpiry(d.expiryTime),
-              expiryTime: d.expiryTime,
-              status: (d.status as Donation['status']) || 'available',
-              deliveryMode: d.deliveryMode || 'ngo',
-            })
-          );
-          setDonations(mapped);
+        const response = await fetch('/api/donations?status=available', {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+
+        const data = await response.json().catch(() => null);
+
+        if (!response.ok) {
+          throw new Error(data?.error || 'Failed to fetch donations');
         }
-      } catch {
+
+        const mapped: Donation[] = (data?.donations || []).map((d: any) => ({
+          id: d.id,
+          name: d.foodName,
+          category: d.category || 'Other',
+          quantity: `${d.quantity} ${d.unit}`,
+          description: d.description || '',
+          donor: d.donorName || 'Donor',
+          location: d.address || d.location?.address || 'Nearby',
+          expiry: d.expiryTime ? calculateExpiry(d.expiryTime) : 'N/A',
+          expiryTime: d.expiryTime || new Date().toISOString(),
+          status: (d.status as Donation['status']) || 'available',
+          deliveryMode: d.deliveryMode || 'ngo',
+        }));
+
+        setDonations(mapped);
+      } catch (e) {
+        if ((e as any)?.name === 'AbortError') return;
         toast.error('Failed to load donations. Please try again.');
       } finally {
         setIsLoading(false);
       }
     }
+
     fetchDonations();
+    return () => controller.abort();
   }, []);
 
+  // ─────────────────────────────────────────────────────────────
+  // Helpers
+  // ─────────────────────────────────────────────────────────────
   const filteredDonations = useMemo(() => {
     let results = [...donations];
 
@@ -210,6 +224,9 @@ export default function AvailableFoodPage() {
 
   const isUserNgo = isAuthenticated && user?.role === 'ngo';
 
+  // ─────────────────────────────────────────────────────────────
+  // Beneficiaries
+  // ─────────────────────────────────────────────────────────────
   const fetchBeneficiaries = async () => {
     if (!authToken) return;
     setLoadingBeneficiaries(true);
@@ -256,6 +273,7 @@ export default function AvailableFoodPage() {
       setNewBName('');
       setNewBPhone('');
       setNewBAddress('');
+
       await fetchBeneficiaries();
 
       if (data?.beneficiary?.id) setBeneficiaryId(data.beneficiary.id);
@@ -266,7 +284,10 @@ export default function AvailableFoodPage() {
     }
   };
 
-  const requestPickup = async (donation: Donation, beneficiaryId?: string) => {
+  // ─────────────────────────────────────────────────────────────
+  // Requests
+  // ─────────────────────────────────────────────────────────────
+  const requestPickup = async (donation: Donation, beneficiaryIdArg?: string) => {
     if (!user || user.role !== 'ngo') {
       toast.error('Only NGO users can request pickups. Please login as an NGO.');
       return;
@@ -284,7 +305,7 @@ export default function AvailableFoodPage() {
       },
       body: JSON.stringify({
         donationId: donation.id,
-        ...(beneficiaryId ? { beneficiaryId } : {}),
+        ...(beneficiaryIdArg ? { beneficiaryId: beneficiaryIdArg } : {}),
       }),
     });
 
@@ -295,17 +316,38 @@ export default function AvailableFoodPage() {
     toast.success(`Pickup request sent for "${donation.name}"!`);
   };
 
+  const openDirectDialog = async (donation: Donation) => {
+    setDirectDonation(donation);
+    setDirectDialogOpen(true);
+    setBeneficiaryId('');
+    await fetchBeneficiaries();
+  };
+
+  // ✅ AUTO-OPEN direct dialog if NGO comes from dashboard
+  useEffect(() => {
+    if (!isAuthenticated || user?.role !== 'ngo' || !authToken) return;
+    if (!donations.length) return;
+
+    const id = sessionStorage.getItem('hf_direct_request_donationId');
+    if (!id) return;
+
+    const target = donations.find((d) => d.id === id);
+    if (!target) return;
+
+    sessionStorage.removeItem('hf_direct_request_donationId');
+
+    if (target.deliveryMode === 'direct') {
+      openDirectDialog(target).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [donations, isAuthenticated, user?.role, authToken]);
+
   const handleRequestPickup = async (donation: Donation) => {
     try {
       if (donation.deliveryMode === 'direct') {
-        // open beneficiary dialog
-        setDirectDonation(donation);
-        setDirectDialogOpen(true);
-        setBeneficiaryId('');
-        await fetchBeneficiaries();
+        await openDirectDialog(donation);
         return;
       }
-
       await requestPickup(donation);
     } catch (e: any) {
       toast.error(e?.message || 'Something went wrong');
@@ -327,6 +369,9 @@ export default function AvailableFoodPage() {
     }
   };
 
+  // ─────────────────────────────────────────────────────────────
+  // UI
+  // ─────────────────────────────────────────────────────────────
   return (
     <div className="relative min-h-screen bg-gradient-to-br from-emerald-50/50 via-white to-amber-50/30">
       <FoodPatternBackground />
@@ -451,7 +496,8 @@ export default function AvailableFoodPage() {
                     <Card className="overflow-hidden hover:shadow-md transition-shadow duration-300 h-full">
                       <div
                         className={`relative flex h-44 items-center justify-center bg-gradient-to-br ${
-                          categoryGradients[donation.category] || 'from-gray-100 to-gray-50'
+                          categoryGradients[donation.category] ||
+                          'from-gray-100 to-gray-50'
                         }`}
                       >
                         {categoryIcons[donation.category] || (
@@ -461,16 +507,23 @@ export default function AvailableFoodPage() {
                         <div className="absolute top-3 right-3">
                           <Badge
                             variant="outline"
-                            className={statusConfig[donation.status]?.className || 'bg-gray-100 text-gray-700 border-gray-200'}
+                            className={
+                              statusConfig[donation.status]?.className ||
+                              'bg-gray-100 text-gray-700 border-gray-200'
+                            }
                           >
                             {statusConfig[donation.status]?.label || donation.status}
                           </Badge>
                         </div>
 
                         <div className="absolute top-3 left-3 flex gap-2">
-                          <Badge variant="secondary" className="bg-white/90 text-gray-700 backdrop-blur-sm">
+                          <Badge
+                            variant="secondary"
+                            className="bg-white/90 text-gray-700 backdrop-blur-sm"
+                          >
                             {donation.category}
                           </Badge>
+
                           {donation.deliveryMode === 'direct' && (
                             <Badge className="bg-emerald-600 text-white border-none">
                               Direct
@@ -490,22 +543,34 @@ export default function AvailableFoodPage() {
                         <div className="space-y-2 mb-4">
                           <div className="flex items-center justify-between text-sm">
                             <span className="text-muted-foreground">Quantity</span>
-                            <span className="font-medium text-gray-700">{donation.quantity}</span>
+                            <span className="font-medium text-gray-700">
+                              {donation.quantity}
+                            </span>
                           </div>
 
-                          <div className={`flex items-center justify-between text-sm ${isExpiringSoon(donation.expiry) ? 'text-red-600' : ''}`}>
+                          <div
+                            className={`flex items-center justify-between text-sm ${
+                              isExpiringSoon(donation.expiry) ? 'text-red-600' : ''
+                            }`}
+                          >
                             <span className="flex items-center gap-1 text-muted-foreground">
                               <Clock className="h-3.5 w-3.5" />
                               {isExpiringSoon(donation.expiry) ? 'Expires soon!' : 'Expires in'}
                             </span>
-                            <span className={`font-medium ${isExpiringSoon(donation.expiry) ? 'text-red-600' : 'text-gray-700'}`}>
+                            <span
+                              className={`font-medium ${
+                                isExpiringSoon(donation.expiry) ? 'text-red-600' : 'text-gray-700'
+                              }`}
+                            >
                               {donation.expiry}
                             </span>
                           </div>
 
                           <div className="flex items-center justify-between text-sm">
                             <span className="text-muted-foreground">Donor</span>
-                            <span className="font-medium text-gray-700">{donation.donor}</span>
+                            <span className="font-medium text-gray-700">
+                              {donation.donor}
+                            </span>
                           </div>
 
                           <div className="flex items-center justify-between text-sm">
@@ -607,17 +672,32 @@ export default function AvailableFoodPage() {
 
             <div className="rounded-lg border p-3 space-y-3">
               <div className="text-sm font-semibold">Create New Beneficiary</div>
+
               <div className="grid gap-2">
                 <Label className="text-xs">Full Name</Label>
-                <Input value={newBName} onChange={(e) => setNewBName(e.target.value)} placeholder="Recipient name" />
+                <Input
+                  value={newBName}
+                  onChange={(e) => setNewBName(e.target.value)}
+                  placeholder="Recipient name"
+                />
               </div>
+
               <div className="grid gap-2">
                 <Label className="text-xs">Phone (optional)</Label>
-                <Input value={newBPhone} onChange={(e) => setNewBPhone(e.target.value)} placeholder="+91..." />
+                <Input
+                  value={newBPhone}
+                  onChange={(e) => setNewBPhone(e.target.value)}
+                  placeholder="+91..."
+                />
               </div>
+
               <div className="grid gap-2">
                 <Label className="text-xs">Address</Label>
-                <Input value={newBAddress} onChange={(e) => setNewBAddress(e.target.value)} placeholder="Full address" />
+                <Input
+                  value={newBAddress}
+                  onChange={(e) => setNewBAddress(e.target.value)}
+                  placeholder="Full address"
+                />
               </div>
 
               <Button
