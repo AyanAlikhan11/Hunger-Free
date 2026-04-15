@@ -2300,62 +2300,42 @@ export function NGODashboard() {
   }, [user?.id, fetchData]);
 
   const handleRequestPickup = async (donation: any) => {
-  if (!authToken) {
-    toast.error('Session missing/expired. Please login again.');
-    return;
-  }
-
-  const donationId = String(donation?.id || '');
-  if (!donationId) {
-    toast.error('Donation id missing. Refresh and try again.');
-    return;
-  }
-
-  // Direct donation => beneficiary flow
-  if (donation?.deliveryMode === 'direct') {
-    sessionStorage.setItem('hf_direct_request_donationId', donationId);
-    toast.info('This donation requires beneficiary selection. Redirecting...');
-    setCurrentPage('available-food');
-    return;
-  }
-
-  setRequestingId(donationId);
-
-  try {
-    const res = await fetch('/api/requests', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${authToken}`,
-      },
-      body: JSON.stringify({ donationId }),
-    });
-
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-      // Show the real API error
-      toast.error(data?.error || 'Failed to request pickup');
-
-      // Helpful hint if profile coords are missing
-      const msg = String(data?.error || '');
-      if (
-        msg.toLowerCase().includes('ngo') &&
-        (msg.toLowerCase().includes('location') || msg.toLowerCase().includes('lat/lng') || msg.toLowerCase().includes('address'))
-      ) {
-        toast.info('Update NGO profile with address + map location (lat/lng), then try again.');
-      }
+    if (!authToken) {
+      toast.error('Session missing/expired. Please login again.');
       return;
     }
 
-    toast.success(`Pickup requested for ${donation.foodName}`);
-    fetchData();
-  } catch (e: any) {
-    toast.error(e?.message || 'Failed to request pickup');
-  } finally {
-    setRequestingId(null);
-  }
-};
+    // ✅ IMPORTANT: handle direct donations BEFORE calling /api/requests
+    if (donation?.deliveryMode === 'direct') {
+      // store donation id so available-food page can auto-open dialog
+      sessionStorage.setItem('hf_direct_request_donationId', String(donation.id));
+      toast.info('This donation requires beneficiary selection. Redirecting...');
+      setCurrentPage('available-food');
+      return;
+    }
+
+    setRequestingId(donation.id);
+    try {
+      const res = await fetch('/api/requests', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ donationId: donation.id }),
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || 'Failed to request pickup');
+
+      toast.success(`Pickup requested for ${donation.foodName}`);
+      fetchData();
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to request pickup');
+    } finally {
+      setRequestingId(null);
+    }
+  };
 
   const activeRequests = myRequests.filter(
     (r: any) => r.status !== 'delivered' && r.status !== 'cancelled'
@@ -2473,7 +2453,7 @@ export function NGODashboard() {
                     </div>
                     <Button
                       className="w-full bg-emerald-600 hover:bg-emerald-700"
-                      disabled={requestingId === String(food.id)}
+                      disabled={requestingId === food.id}
                       onClick={() => handleRequestPickup(food)}
                     >
                       {requestingId === food.id ? (
@@ -2690,73 +2670,6 @@ export function VolunteerDashboard() {
     }
   };
 
-type LatLng = { lat: number; lng: number };
-
-const toNum = (v: any): number | null => {
-  const n = typeof v === "string" ? parseFloat(v) : Number(v);
-  return Number.isFinite(n) ? n : null;
-};
-
-const makeLatLng = (lat: any, lng: any): LatLng | null => {
-  const la = toNum(lat);
-  const ln = toNum(lng);
-  if (la === null || ln === null) return null;
-  return { lat: la, lng: ln };
-};
-
-const openInMaps = (url: string) => {
-  const tab = window.open("about:blank", "_blank", "noopener,noreferrer");
-  if (!tab) {
-    window.location.href = url; // popup blocked fallback
-    return;
-  }
-  tab.location.href = url;
-};
-
-const handleNavigate = (delivery: any) => {
-  const pickup = makeLatLng(delivery.pickupLat, delivery.pickupLng);
-  const drop = makeLatLng(delivery.dropoffLat, delivery.dropoffLng);
-
-  // Accepted => go to pickup
-  if (delivery.status === "accepted") {
-    if (!pickup) {
-      toast.error("Pickup coordinates missing.");
-      return;
-    }
-    // No origin: Google will use user's current location itself (more reliable than browser geolocation)
-    openInMaps(
-      `https://www.google.com/maps/dir/?api=1&destination=${pickup.lat},${pickup.lng}&travelmode=driving`
-    );
-    return;
-  }
-
-  // In transit / delivered => go to dropoff
-  if (delivery.status === "in_transit" || delivery.status === "delivered") {
-    // Prefer drop coords; else use drop address (if not placeholder)
-    if (drop) {
-      // Optional: show pickup -> drop route if pickup exists
-      const url = pickup
-        ? `https://www.google.com/maps/dir/?api=1&origin=${pickup.lat},${pickup.lng}&destination=${drop.lat},${drop.lng}&travelmode=driving`
-        : `https://www.google.com/maps/dir/?api=1&destination=${drop.lat},${drop.lng}&travelmode=driving`;
-      openInMaps(url);
-      return;
-    }
-
-    const addr = String(delivery.dropoffAddress || "").trim();
-    if (!addr || addr.toLowerCase() === "ngo address") {
-      toast.error("Drop-off location missing. NGO must set address/lat/lng in profile.");
-      return;
-    }
-
-    openInMaps(
-      `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}&travelmode=driving`
-    );
-    return;
-  }
-
-  toast.error("Navigation is only available for accepted / in_transit / delivered.");
-};
-
   const totalDelivered = allRequests.filter(
     (r: any) => r.volunteerId === user?.id && r.status === 'delivered'
   ).length;
@@ -2907,16 +2820,10 @@ const handleNavigate = (delivery: any) => {
                             Mark as Delivered
                           </Button>
                         )}
-                        <Button
-  type="button"
-  variant="outline"
-  size="sm"
-  onClick={() => handleNavigate(delivery)}
-  disabled={delivery.status !== "accepted" && delivery.status !== "in_transit"}
->
-  <Navigation className="size-4" />
-  {delivery.status === "accepted" ? "Navigate to Pickup" : "Navigate to Drop"}
-</Button>
+                        <Button variant="outline" size="sm">
+                          <Navigation className="size-4" />
+                          Navigate
+                        </Button>
                       </div>
                     </motion.div>
                   );
