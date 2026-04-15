@@ -142,7 +142,19 @@ function toNumberOrNull(v: unknown) {
   return Number.isFinite(n) ? n : null;
 }
 
+function requireAddressOrThrow(address: string, code: string) {
+  if (!address) throw new Error(code);
+  return address;
+}
 
+function requireCoordsOrThrow(lat: number | null, lng: number | null, code: string) {
+  if (lat === null || lng === null) throw new Error(code);
+  return { lat, lng };
+}
+
+// -----------------------------------------------------------------------------
+// GET /api/requests
+// -----------------------------------------------------------------------------
 export async function GET(request: NextRequest) {
   try {
     await requireUid(request);
@@ -179,7 +191,9 @@ export async function GET(request: NextRequest) {
     const donationIds = Array.from(new Set(requestsRaw.map((r) => r.donationId).filter(Boolean)));
     const donationRefs = donationIds.map((id) => db.collection(COLLECTIONS.donations).doc(id));
     const donationSnaps = donationRefs.length ? await db.getAll(...donationRefs) : [];
-    const donationMap = new Map(donationSnaps.map((s) => [s.id, s.exists ? { id: s.id, ...s.data() } : null]));
+    const donationMap = new Map(
+      donationSnaps.map((s) => [s.id, s.exists ? { id: s.id, ...s.data() } : null])
+    );
 
     const requests = requestsRaw.map((r) => ({
       ...r,
@@ -196,6 +210,9 @@ export async function GET(request: NextRequest) {
   }
 }
 
+// -----------------------------------------------------------------------------
+// POST /api/requests
+// -----------------------------------------------------------------------------
 export async function POST(request: NextRequest) {
   try {
     const uid = await requireUid(request);
@@ -206,7 +223,7 @@ export async function POST(request: NextRequest) {
     const profile = await getUserProfile(uid);
     if (!profile) return NextResponse.json({ error: 'User profile missing' }, { status: 400 });
 
-    // ✅ block disabled accounts
+    // block disabled accounts
     if ((profile as any).isActive === false) {
       return NextResponse.json({ error: 'Account disabled. Contact support.' }, { status: 403 });
     }
@@ -236,15 +253,17 @@ export async function POST(request: NextRequest) {
 
       const deliveryMode = donation.deliveryMode === 'direct' ? 'direct' : 'ngo';
 
-      // ✅ pickup snapshot from donation (normalize address)
+      // --------------------
+      // Pickup (from donation)
+      // --------------------
       const pickupAddress = normalizeAddress(donation.address);
-      if (!pickupAddress) throw new Error('PICKUP_ADDRESS_MISSING');
+      requireAddressOrThrow(pickupAddress, 'PICKUP_ADDRESS_MISSING');
 
-      // coords are optional (but recommended). keep as null if missing
       const pickupLat = toNumberOrNull(donation.lat);
       const pickupLng = toNumberOrNull(donation.lng);
+      requireCoordsOrThrow(pickupLat, pickupLng, 'PICKUP_COORDS_MISSING');
 
-      // ✅ donation snapshot (speed: reduces joins)
+      // donation snapshot (reduces joins)
       const donationSnapshot = {
         foodName: donation.foodName || 'Food',
         donorName: donation.donorName || 'Donor',
@@ -253,13 +272,11 @@ export async function POST(request: NextRequest) {
         category: donation.category || 'Other',
       };
 
-      // ✅ dropoff decision
+      // --------------------
+      // Dropoff decision
+      // --------------------
       let dropoffType: 'ngo' | 'recipient' = 'ngo';
       let dropoffRecipientId: string | null = null;
-
-      let dropoffAddress = normalizeAddress(profile.address) || 'NGO Address';
-      const dropoffLat = toNumberOrNull((profile as any).lat);
-      const dropoffLng = toNumberOrNull((profile as any).lng);
 
       if (deliveryMode === 'direct') {
         if (!beneficiaryId) throw new Error('BENEFICIARY_REQUIRED');
@@ -270,7 +287,7 @@ export async function POST(request: NextRequest) {
 
         const b = bSnap.data() as any;
 
-        // ✅ NGO can only use its own verified beneficiaries (admin can use any)
+        // NGO can only use its own verified beneficiaries (admin can use any)
         if (profile.role !== 'admin' && b.verifiedByNgoId !== uid) {
           throw new Error('BENEFICIARY_FORBIDDEN');
         }
@@ -278,12 +295,13 @@ export async function POST(request: NextRequest) {
         dropoffType = 'recipient';
         dropoffRecipientId = beneficiaryId;
 
-        dropoffAddress = normalizeAddress(b.address) || 'Recipient Address';
-        // overwrite dropoff coords from beneficiary if present
-        const bLat = toNumberOrNull(b.lat);
-        const bLng = toNumberOrNull(b.lng);
+        const dropoffAddress = normalizeAddress(b.address);
+        requireAddressOrThrow(dropoffAddress, 'BENEFICIARY_ADDRESS_MISSING');
 
-        // store these in request
+        const dropoffLat = toNumberOrNull(b.lat);
+        const dropoffLng = toNumberOrNull(b.lng);
+        requireCoordsOrThrow(dropoffLat, dropoffLng, 'BENEFICIARY_COORDS_MISSING');
+
         tx.set(requestRef, {
           donationId,
           ngoId: uid,
@@ -300,8 +318,8 @@ export async function POST(request: NextRequest) {
 
           dropoffType,
           dropoffAddress,
-          dropoffLat: bLat,
-          dropoffLng: bLng,
+          dropoffLat,
+          dropoffLng,
           dropoffRecipientId,
 
           status: 'pending',
@@ -309,7 +327,14 @@ export async function POST(request: NextRequest) {
           updatedAt: now,
         });
       } else {
-        // NGO delivery
+        // NGO delivery => must have NGO profile address + coords
+        const dropoffAddress = normalizeAddress((profile as any).address);
+        requireAddressOrThrow(dropoffAddress, 'NGO_ADDRESS_MISSING');
+
+        const dropoffLat = toNumberOrNull((profile as any).lat);
+        const dropoffLng = toNumberOrNull((profile as any).lng);
+        requireCoordsOrThrow(dropoffLat, dropoffLng, 'NGO_COORDS_MISSING');
+
         tx.set(requestRef, {
           donationId,
           ngoId: uid,
@@ -324,7 +349,7 @@ export async function POST(request: NextRequest) {
           pickupLat,
           pickupLng,
 
-          dropoffType,
+          dropoffType: 'ngo',
           dropoffAddress,
           dropoffLat,
           dropoffLng,
@@ -364,9 +389,14 @@ export async function POST(request: NextRequest) {
       : error?.message === 'DONATION_NOT_FOUND' ? 'Donation not found'
       : error?.message === 'DONATION_NOT_AVAILABLE' ? 'Donation is not available'
       : error?.message === 'PICKUP_ADDRESS_MISSING' ? 'Pickup address is missing for this donation'
+      : error?.message === 'PICKUP_COORDS_MISSING' ? 'Pickup location (lat/lng) is missing. Donor must select location on map.'
       : error?.message === 'BENEFICIARY_REQUIRED' ? 'Beneficiary is required for direct delivery'
       : error?.message === 'BENEFICIARY_NOT_FOUND' ? 'Beneficiary not found'
       : error?.message === 'BENEFICIARY_FORBIDDEN' ? 'You can only use beneficiaries verified by your NGO'
+      : error?.message === 'BENEFICIARY_ADDRESS_MISSING' ? 'Beneficiary address is missing'
+      : error?.message === 'BENEFICIARY_COORDS_MISSING' ? 'Beneficiary location (lat/lng) is missing'
+      : error?.message === 'NGO_ADDRESS_MISSING' ? 'NGO address is missing. Please update NGO profile.'
+      : error?.message === 'NGO_COORDS_MISSING' ? 'NGO location (lat/lng) is missing. Please set NGO location on map in profile.'
       : 'Failed to create request';
 
     const code =
@@ -375,14 +405,22 @@ export async function POST(request: NextRequest) {
       : error?.message === 'BENEFICIARY_NOT_FOUND' ? 404
       : error?.message === 'DONATION_NOT_AVAILABLE' ? 409
       : error?.message === 'BENEFICIARY_REQUIRED' ? 400
-      : error?.message === 'BENEFICIARY_FORBIDDEN' ? 403
       : error?.message === 'PICKUP_ADDRESS_MISSING' ? 400
+      : error?.message === 'PICKUP_COORDS_MISSING' ? 400
+      : error?.message === 'BENEFICIARY_ADDRESS_MISSING' ? 400
+      : error?.message === 'BENEFICIARY_COORDS_MISSING' ? 400
+      : error?.message === 'NGO_ADDRESS_MISSING' ? 400
+      : error?.message === 'NGO_COORDS_MISSING' ? 400
+      : error?.message === 'BENEFICIARY_FORBIDDEN' ? 403
       : 500;
 
     return NextResponse.json({ error: msg }, { status: code });
   }
 }
 
+// -----------------------------------------------------------------------------
+// PATCH /api/requests
+// -----------------------------------------------------------------------------
 export async function PATCH(request: NextRequest) {
   try {
     const uid = await requireUid(request);
@@ -415,6 +453,7 @@ export async function PATCH(request: NextRequest) {
       const volunteerAccepting =
         profile.role === 'volunteer' &&
         updates.status === 'accepted' &&
+        (reqData.status === 'pending') &&
         (!reqData.volunteerId || reqData.volunteerId === uid);
 
       if (!isAdmin && !isNgoOwner && !isAssignedVolunteer && !volunteerAccepting) {
