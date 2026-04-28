@@ -1,25 +1,4 @@
-/**
- * Firebase Configuration for HungerFree
- * 
- * This module provides Firebase initialization and service wrappers.
- * When Firebase environment variables are configured, it uses real Firebase services.
- * When not configured, the app falls back to the API routes (which use Prisma/SQLite).
- * 
- * TO SET UP FIREBASE:
- * 1. Create a Firebase project at https://console.firebase.google.com
- * 2. Enable Authentication (Email/Password)
- * 3. Create a Firestore Database
- * 4. Enable Firebase Storage
- * 5. Add your config to .env.local:
- *    NEXT_PUBLIC_FIREBASE_API_KEY=your-api-key
- *    NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
- *    NEXT_PUBLIC_FIREBASE_PROJECT_ID=your-project-id
- *    NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-project.appspot.com
- *    NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your-sender-id
- *    NEXT_PUBLIC_FIREBASE_APP_ID=your-app-id
- *    NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=your-measurement-id
- *    FIREBASE_SERVICE_ACCOUNT_KEY=your-service-account-key-json (for Admin SDK)
- */
+
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
